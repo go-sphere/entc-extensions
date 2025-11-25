@@ -26,9 +26,9 @@ type GenFilesConf struct {
 // GenFileEntityConf represents configuration for a single entity's binding generation.
 // It defines the actions to generate and how to build configuration for each action.
 type GenFileEntityConf struct {
-	Name          string
-	Actions       []any
-	ConfigBuilder func(act any) *GenFuncConf
+	Source  any
+	Target  any
+	Actions []any
 }
 
 // GenFiles generates a complete Go source file containing binding functions for multiple entities.
@@ -49,7 +49,7 @@ func GenFiles(config *GenFilesConf) error {
 		pkgName = "bind"
 	}
 	for _, item := range config.Entities {
-		filename := filepath.Join(config.Dir, fmt.Sprintf("%s.go", strcase.ToSnake(item.Name)))
+		filename := filepath.Join(config.Dir, fmt.Sprintf("%s.go", strcase.ToSnake(inspect.TypeName(item.Source))))
 		err := genFile(filename, pkgName, &item, config.ExtraImports)
 		if err != nil {
 			return err
@@ -68,7 +68,7 @@ func genFile(fileName string, pkgName string, item *GenFileEntityConf, extraImpo
 	pkgImports = append(pkgImports, extraImports...)
 
 	for i, act := range item.Actions {
-		conf := item.ConfigBuilder(act)
+		conf := NewGenFuncConf(item.Source, item.Target, act)
 		pkgImports = append(pkgImports,
 			inspect.ExtractPackageImport(act),
 			inspect.ExtractPackageImport(conf.source),
