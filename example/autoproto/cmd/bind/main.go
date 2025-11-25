@@ -7,6 +7,7 @@ import (
 	"github.com/go-sphere/entc-extensions/autoproto/mapper"
 	"github.com/go-sphere/entc-extensions/example/autoproto/api/entpb"
 	"github.com/go-sphere/entc-extensions/example/autoproto/ent"
+	"github.com/go-sphere/entc-extensions/example/autoproto/ent/example"
 )
 
 func main() {
@@ -45,6 +46,9 @@ func createBindFile(dir string) error {
 				Source:  ent.Example{},
 				Target:  entpb.Example{},
 				Actions: []any{ent.ExampleCreate{}},
+				Options: []bind.GenBindConfOption{
+					bind.WithIgnoreFields(example.FieldID),
+				},
 			},
 			{
 				Source:  ent.EdgeItem{},

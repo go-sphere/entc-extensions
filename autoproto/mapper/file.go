@@ -17,10 +17,10 @@ import (
 type GenFilesConf struct {
 	Dir      string
 	Package  string
-	Entities []GenFuncConf
+	Entities []GenMapperConf
 }
 
-type GenFileEntityConf = GenFuncConf
+type GenFileEntityConf = GenMapperConf
 
 // GenerateFiles generates mapping files for specified entities using the provided configuration.
 // It removes existing files in the target directory and creates new ones based on the configuration.
@@ -53,7 +53,7 @@ func GenerateFiles(options *GenFilesConf) error {
 	return nil
 }
 
-func genFile(fileName string, pkgName string, item *GenFuncConf) error {
+func genFile(fileName string, pkgName string, item *GenMapperConf) error {
 	var body strings.Builder
 	imports := [][2]string{{"fmt", ""}}
 
@@ -61,7 +61,7 @@ func genFile(fileName string, pkgName string, item *GenFuncConf) error {
 		inspect.ExtractPackageImport(item.Source),
 		inspect.ExtractPackageImport(item.Target),
 	)
-	content, err := GenFunc(item)
+	content, err := GenMapperFunc(item)
 	if err != nil {
 		return err
 	}

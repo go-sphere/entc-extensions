@@ -14,15 +14,15 @@ import (
 //go:embed mapper.tmpl
 var mapperTemplate string
 
-// GenFuncConf configures the generation of mapper functions for a single entity pair.
-type GenFuncConf struct {
+// GenMapperConf configures the generation of mapper functions for a single entity pair.
+type GenMapperConf struct {
 	Source       any
 	Target       any
 	IgnoreFields []string
 }
 
-// GenFunc renders the mapper functions for the provided configuration.
-func GenFunc(conf *GenFuncConf) (string, error) {
+// GenMapperFunc renders the mapper functions for the provided configuration.
+func GenMapperFunc(conf *GenMapperConf) (string, error) {
 	sourceName := inspect.TypeName(conf.Source)
 	targetName := inspect.TypeName(conf.Target)
 

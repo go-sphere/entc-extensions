@@ -29,6 +29,7 @@ type GenFileEntityConf struct {
 	Source  any
 	Target  any
 	Actions []any
+	Options []GenBindConfOption
 }
 
 // GenFiles generates a complete Go source file containing binding functions for multiple entities.
@@ -68,7 +69,10 @@ func genFile(fileName string, pkgName string, item *GenFileEntityConf, extraImpo
 	pkgImports = append(pkgImports, extraImports...)
 
 	for i, act := range item.Actions {
-		conf := NewGenFuncConf(item.Source, item.Target, act)
+		conf := NewGenBindConf(item.Source, item.Target, act)
+		for _, opt := range item.Options {
+			opt(conf)
+		}
 		pkgImports = append(pkgImports,
 			inspect.ExtractPackageImport(act),
 			inspect.ExtractPackageImport(conf.source),

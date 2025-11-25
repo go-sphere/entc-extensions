@@ -14,9 +14,9 @@ import (
 //go:embed func.tmpl
 var genBindFuncTemplate string
 
-// GenFuncConf holds configuration for generating binding functions between different data structures.
+// GenBindConf holds configuration for generating binding functions between different data structures.
 // It's commonly used for generating code that converts between ORM entities and Protocol Buffer messages.
-type GenFuncConf struct {
+type GenBindConf struct {
 	source        any      // entity entity, e.g. entity.Example
 	target        any      // protobuf entity, e.g. entpb.Example
 	action        any      // entity operation, e.g. entity.ExampleCreate, entity.ExampleUpdateOne
@@ -25,10 +25,10 @@ type GenFuncConf struct {
 	TargetPkgName string   // package name of target, e.g. "entpb"
 }
 
-// NewGenFuncConf creates a new configuration for binding function generation.
+// NewGenBindConf creates a new configuration for binding function generation.
 // It automatically determines package names from the provided source and target types.
-func NewGenFuncConf(source, target, action any) *GenFuncConf {
-	return &GenFuncConf{
+func NewGenBindConf(source, target, action any) *GenBindConf {
+	return &GenBindConf{
 		source:        source,
 		target:        target,
 		action:        action,
@@ -38,32 +38,37 @@ func NewGenFuncConf(source, target, action any) *GenFuncConf {
 	}
 }
 
+type GenBindConfOption func(*GenBindConf)
+
 // WithSourcePkgName sets a custom package name for the source type.
 // Returns the modified configuration for method chaining.
-func (c *GenFuncConf) WithSourcePkgName(pkgName string) *GenFuncConf {
-	c.SourcePkgName = pkgName
-	return c
+func WithSourcePkgName(pkgName string) GenBindConfOption {
+	return func(conf *GenBindConf) {
+		conf.SourcePkgName = pkgName
+	}
 }
 
 // WithTargetPkgName sets a custom package name for the target type.
 // Returns the modified configuration for method chaining.
-func (c *GenFuncConf) WithTargetPkgName(pkgName string) *GenFuncConf {
-	c.TargetPkgName = pkgName
-	return c
+func WithTargetPkgName(pkgName string) GenBindConfOption {
+	return func(conf *GenBindConf) {
+		conf.TargetPkgName = pkgName
+	}
 }
 
 // WithIgnoreFields specifies field names that should be ignored during binding generation.
 // Returns the modified configuration for method chaining.
-func (c *GenFuncConf) WithIgnoreFields(fields ...string) *GenFuncConf {
-	c.IgnoreFields = fields
-	return c
+func WithIgnoreFields(fields ...string) GenBindConfOption {
+	return func(conf *GenBindConf) {
+		conf.IgnoreFields = fields
+	}
 }
 
 // GenBindFunc generates Go code for binding functions based on the provided configuration.
 // It creates functions that can convert between source and target types using reflection
 // to analyze field mappings and generate appropriate setter calls.
 // Returns the generated Go code as a string or an error if generation fails.
-func GenBindFunc(conf *GenFuncConf) (string, error) {
+func GenBindFunc(conf *GenBindConf) (string, error) {
 	actionName := inspect.TypeName(conf.action)
 	sourceName := inspect.TypeName(conf.source)
 	targetName := inspect.TypeName(conf.target)
