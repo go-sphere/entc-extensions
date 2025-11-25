@@ -18,8 +18,6 @@ import (
 )
 
 type Options struct {
-	SchemaPath string
-
 	AllFieldsRequired bool
 	AutoAddAnnotation bool
 	EnumUseRawType    bool
@@ -32,9 +30,8 @@ type Options struct {
 	ProtoPackages []ProtoPackage
 }
 
-func NewDefaultOptions(schema string) *Options {
+func NewDefaultOptions() *Options {
 	return &Options{
-		SchemaPath:           schema,
 		AllFieldsRequired:    true,
 		AutoAddAnnotation:    true,
 		EnumUseRawType:       true,
@@ -52,20 +49,22 @@ type ProtoPackage struct {
 	Types []string
 }
 
-func LoadGraph(options *Options) (*gen.Graph, error) {
+func LoadGraph(schemaPath string, options *Options) (*gen.Graph, error) {
 	injectProtoPackages(options.ProtoPackages)
-	graph, err := entc.LoadGraph(options.SchemaPath, &gen.Config{
-		Target: options.SchemaPath,
+	graph, err := entc.LoadGraph(schemaPath, &gen.Config{
+		Target: schemaPath,
 	})
-	if err != nil {
-		log.Fatalf("entproto: failed loading entity graph: %v", err)
-	}
+	return FixGraph(graph, options), err
+}
+
+func FixGraph(graph *gen.Graph, options *Options) *gen.Graph {
+	injectProtoPackages(options.ProtoPackages)
 	if options.AutoAddAnnotation {
 		for i := 0; i < len(graph.Nodes); i++ {
 			addAnnotationForNode(graph.Nodes[i], options)
 		}
 	}
-	return graph, err
+	return graph
 }
 
 func addAnnotationForNode(node *gen.Type, options *Options) {

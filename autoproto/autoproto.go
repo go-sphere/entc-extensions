@@ -17,18 +17,6 @@ type ProtoOptions struct {
 	ProtoDir string
 }
 
-func GenerateProto(options *ProtoOptions) error {
-	gh, err := LoadGraph(options.Graph)
-	if err != nil {
-		return err
-	}
-	err = generateProto(gh, options)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 type Extension struct {
 	entc.DefaultExtension
 	options *ProtoOptions
@@ -46,7 +34,8 @@ func (e *Extension) Hooks() []gen.Hook {
 				if err != nil {
 					return err
 				}
-				return GenerateProto(e.options)
+				g = FixGraph(g, e.options.Graph)
+				return generateProto(g, e.options)
 			})
 		},
 	}

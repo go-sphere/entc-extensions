@@ -1,10 +1,11 @@
 module github.com/go-sphere/entc-extensions
 
-go 1.25.4
+go 1.25
 
 require (
 	entgo.io/contrib v0.7.0
 	entgo.io/ent v0.14.5
+	github.com/iancoleman/strcase v0.3.0
 	github.com/jhump/protoreflect v1.10.1
 	github.com/mitchellh/mapstructure v1.5.0
 	golang.org/x/tools v0.39.0
