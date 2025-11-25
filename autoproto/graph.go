@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-type Options struct {
+type GraphOptions struct {
 	AllFieldsRequired bool
 	AutoAddAnnotation bool
 	EnumUseRawType    bool
@@ -30,8 +30,8 @@ type Options struct {
 	ProtoPackages []ProtoPackage
 }
 
-func NewDefaultOptions() *Options {
-	return &Options{
+func NewDefaultGraphOptions() *GraphOptions {
+	return &GraphOptions{
 		AllFieldsRequired:    true,
 		AutoAddAnnotation:    true,
 		EnumUseRawType:       true,
@@ -49,7 +49,7 @@ type ProtoPackage struct {
 	Types []string
 }
 
-func LoadGraph(schemaPath string, options *Options) (*gen.Graph, error) {
+func LoadGraph(schemaPath string, options *GraphOptions) (*gen.Graph, error) {
 	injectProtoPackages(options.ProtoPackages)
 	graph, err := entc.LoadGraph(schemaPath, &gen.Config{
 		Target: schemaPath,
@@ -57,7 +57,7 @@ func LoadGraph(schemaPath string, options *Options) (*gen.Graph, error) {
 	return FixGraph(graph, options), err
 }
 
-func FixGraph(graph *gen.Graph, options *Options) *gen.Graph {
+func FixGraph(graph *gen.Graph, options *GraphOptions) *gen.Graph {
 	injectProtoPackages(options.ProtoPackages)
 	if options.AutoAddAnnotation {
 		for i := 0; i < len(graph.Nodes); i++ {
@@ -67,7 +67,7 @@ func FixGraph(graph *gen.Graph, options *Options) *gen.Graph {
 	return graph
 }
 
-func addAnnotationForNode(node *gen.Type, options *Options) {
+func addAnnotationForNode(node *gen.Type, options *GraphOptions) {
 	if node.Annotations == nil {
 		node.Annotations = make(map[string]interface{}, 1)
 	}
@@ -93,7 +93,7 @@ func addAnnotationForNode(node *gen.Type, options *Options) {
 	}
 }
 
-func addAnnotationForEdge(fd *gen.Edge, idGenerator *fieldIDGenerator, options *Options) {
+func addAnnotationForEdge(fd *gen.Edge, idGenerator *fieldIDGenerator, options *GraphOptions) {
 	if fd.Annotations == nil {
 		fd.Annotations = make(map[string]interface{}, 1)
 	}
@@ -112,7 +112,7 @@ func addAnnotationForEdge(fd *gen.Edge, idGenerator *fieldIDGenerator, options *
 	}
 }
 
-func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator, options *Options) {
+func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator, options *GraphOptions) {
 	if fd.Annotations == nil {
 		fd.Annotations = make(map[string]interface{}, 1)
 	}

@@ -24,8 +24,7 @@ func main() {
 
 func createMappersFile(dir string) error {
 	return mapper.GenerateFiles(&mapper.GenFilesConf{
-		Dir:     dir,
-		Package: "mapper",
+		Dir: dir,
 		Entities: []mapper.GenFileEntityConf{
 			{Source: ent.Example{}, Target: entpb.Example{}},
 			{Source: ent.EdgeItem{}, Target: entpb.EdgeItem{}},

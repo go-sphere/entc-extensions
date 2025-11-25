@@ -27,7 +27,7 @@ func main() {
 			gen.FeatureLock,
 		},
 	}, entc.Extensions(autoproto.NewAutoProtoExtension(&autoproto.ProtoOptions{
-		Graph:    autoproto.NewDefaultOptions(),
+		Graph:    autoproto.NewDefaultGraphOptions(),
 		ProtoDir: "./proto",
 	})))
 	if err != nil {

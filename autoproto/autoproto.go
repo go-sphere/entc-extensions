@@ -13,7 +13,7 @@ import (
 )
 
 type ProtoOptions struct {
-	Graph    *Options
+	Graph    *GraphOptions
 	ProtoDir string
 }
 
