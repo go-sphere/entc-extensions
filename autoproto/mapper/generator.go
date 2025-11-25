@@ -47,7 +47,7 @@ func NewGenerator(file *desc.FileDescriptor, graph *gen.Graph, adapter *entproto
 	return &Generator{
 		ProtoPackageName: pkgName,
 		ProtoImportPath:  importPath,
-		EntImportPath:    GoImportPath(graph.Config.Package),
+		EntImportPath:    GoImportPath(graph.Package),
 		File:             file,
 		Message:          message,
 		EntType:          entType,
