@@ -5,9 +5,8 @@ go 1.25
 require (
 	entgo.io/contrib v0.7.0
 	entgo.io/ent v0.14.5
-	github.com/iancoleman/strcase v0.3.0
+	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/jhump/protoreflect v1.10.1
-	github.com/mitchellh/mapstructure v1.5.0
 	golang.org/x/tools v0.39.0
 	google.golang.org/protobuf v1.36.10
 )
@@ -18,7 +17,6 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/go-openapi/inflect v0.19.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

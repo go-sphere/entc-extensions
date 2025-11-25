@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-sphere/entc-extensions/autoproto/utils/gofile"
 	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
-	"github.com/iancoleman/strcase"
+	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
 )
 
 // GenFilesConf holds configuration for generating a complete Go file with multiple binding functions.

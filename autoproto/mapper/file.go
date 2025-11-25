@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-sphere/entc-extensions/autoproto/utils/gofile"
 	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
-	"github.com/iancoleman/strcase"
+	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
 )
 
 // GenFilesConf defines the configuration for generating multiple files with mapping functions.

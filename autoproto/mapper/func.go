@@ -8,7 +8,7 @@ import (
 	"text/template"
 
 	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
-	"github.com/iancoleman/strcase"
+	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
 )
 
 //go:embed mapper.tmpl
