@@ -17,10 +17,11 @@ import (
 // GenFilesConf holds configuration for generating a complete Go file with multiple binding functions.
 // It coordinates the generation of binding code for multiple entities and their operations.
 type GenFilesConf struct {
-	Dir          string
-	Package      string
-	Entities     []GenFileEntityConf
-	ExtraImports [][2]string
+	Dir                  string
+	Package              string
+	RemoveBeforeGenerate bool
+	Entities             []GenFileEntityConf
+	ExtraImports         [][2]string
 }
 
 // GenFileEntityConf represents configuration for a single entity's binding generation.
@@ -39,11 +40,13 @@ func GenFiles(config *GenFilesConf) error {
 	if config.Dir == "" {
 		return fmt.Errorf("directory is required")
 	}
-	if err := os.RemoveAll(config.Dir); err != nil {
-		return fmt.Errorf("cleanup mapper dir: %w", err)
+	if config.RemoveBeforeGenerate {
+		if err := os.RemoveAll(config.Dir); err != nil {
+			return fmt.Errorf("cleanup bind dir: %w", err)
+		}
 	}
 	if err := os.MkdirAll(config.Dir, 0o755); err != nil {
-		return fmt.Errorf("create mapper dir: %w", err)
+		return fmt.Errorf("create bind dir: %w", err)
 	}
 	pkgName := config.Package
 	if pkgName == "" {

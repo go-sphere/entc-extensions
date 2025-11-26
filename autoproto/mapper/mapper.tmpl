@@ -1,5 +1,5 @@
 {{ define "mapper" }}
-func {{ .FuncName }}(source *{{ .SourcePkgName }}.{{ .SourceName }}) (*{{ .TargetPkgName }}.{{ .TargetName }}, error) {
+func {{ .FuncName }}(source *{{ .SourcePkgName }}.{{ .SourceName }}, modifier ...func(source *{{ .SourcePkgName }}.{{ .SourceName }}, target *{{ .TargetPkgName }}.{{ .TargetName }}) error) (*{{ .TargetPkgName }}.{{ .TargetName }}, error) {
 	if source == nil {
 		return nil, fmt.Errorf("entproto: nil {{ .SourceName }} entity")
 	}
@@ -13,10 +13,15 @@ func {{ .FuncName }}(source *{{ .SourcePkgName }}.{{ .SourceName }}) (*{{ .Targe
 	target.{{ .TargetField }} = {{ .ValueExpr }}
 {{- end }}
 {{- end }}
+	for _, m := range modifier {
+		if err := m(source, target); err != nil {
+			return nil, err
+		}
+	}
 	return target, nil
 }
 
-func {{ .ListFuncName }}(sources []*{{ .SourcePkgName }}.{{ .SourceName }}) ([]*{{ .TargetPkgName }}.{{ .TargetName }}, error) {
+func {{ .ListFuncName }}(sources []*{{ .SourcePkgName }}.{{ .SourceName }}, modifier ...func(source *{{ .SourcePkgName }}.{{ .SourceName }}, target *{{ .TargetPkgName }}.{{ .TargetName }}) error) ([]*{{ .TargetPkgName }}.{{ .TargetName }}, error) {
 	if len(sources) == 0 {
 		return nil, nil
 	}
@@ -25,7 +30,7 @@ func {{ .ListFuncName }}(sources []*{{ .SourcePkgName }}.{{ .SourceName }}) ([]*
 		if item == nil {
 			continue
 		}
-		res, err := {{ .FuncName }}(item)
+		res, err := {{ .FuncName }}(item, modifier...)
 		if err != nil {
 			return nil, fmt.Errorf("entproto: convert {{ .SourceName }} list: %w", err)
 		}

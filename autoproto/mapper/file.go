@@ -15,9 +15,10 @@ import (
 
 // GenFilesConf defines the configuration for generating multiple files with mapping functions.
 type GenFilesConf struct {
-	Dir      string
-	Package  string
-	Entities []GenMapperConf
+	Dir                  string
+	Package              string
+	RemoveBeforeGenerate bool
+	Entities             []GenMapperConf
 }
 
 type GenFileEntityConf = GenMapperConf
@@ -29,8 +30,10 @@ func GenerateFiles(options *GenFilesConf) error {
 	if options.Dir == "" {
 		return fmt.Errorf("directory is required")
 	}
-	if err := os.RemoveAll(options.Dir); err != nil {
-		return fmt.Errorf("cleanup mapper dir: %w", err)
+	if options.RemoveBeforeGenerate {
+		if err := os.RemoveAll(options.Dir); err != nil {
+			return fmt.Errorf("cleanup mapper dir: %w", err)
+		}
 	}
 	if err := os.MkdirAll(options.Dir, 0o755); err != nil {
 		return fmt.Errorf("create mapper dir: %w", err)
