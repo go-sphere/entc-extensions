@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-sphere/entc-extensions/autoproto/gen/bind"
@@ -34,11 +33,23 @@ func BindFiles(conf *conf.FilesConf) error {
 		pkgName = "bind"
 	}
 
+	filenames := gofile.NewFilenames(conf.Dir)
+	{
+		file := bind.CreateOptionsFile(pkgName)
+		err := gofile.WriteFile(filenames.Next("options"), []byte(file))
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, item := range conf.Entities {
 		if item.Source == nil || item.Target == nil {
 			return fmt.Errorf("bind entity must provide both Source and Target types")
 		}
-		filename := filepath.Join(conf.Dir, fmt.Sprintf("%s.go", strcase.ToSnake(inspect.TypeName(item.Source))))
+		if len(item.Actions) == 0 {
+			continue
+		}
+		filename := filenames.Next(strcase.ToSnake(inspect.TypeName(item.Source)))
 		err := genBindFile(filename, pkgName, conf.ExtraImports, item)
 		if err != nil {
 			return err
@@ -51,7 +62,6 @@ func genBindFile(fileName string, pkgName string, pkgImports [][2]string, item *
 	var body strings.Builder
 
 	pkgImports = append(pkgImports,
-		inspect.ExtractPackageImport(bind.Options{}),
 		inspect.ExtractPackageImport(item.Source),
 		inspect.ExtractPackageImport(item.Target),
 	)

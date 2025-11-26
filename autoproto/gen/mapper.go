@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
@@ -34,11 +33,12 @@ func MapperFiles(conf *conf.FilesConf) error {
 		pkgName = "mapper"
 	}
 
+	filenames := gofile.NewFilenames(conf.Dir)
 	for _, item := range conf.Entities {
 		if item.Source == nil || item.Target == nil {
 			return fmt.Errorf("mapper item must provide both Source and Target types")
 		}
-		filename := filepath.Join(conf.Dir, fmt.Sprintf("%s.go", strcase.ToSnake(inspect.TypeName(item.Source))))
+		filename := filenames.Next(strcase.ToSnake(inspect.TypeName(item.Source)))
 		err := genMapperFile(filename, pkgName, conf.ExtraImports, item)
 		if err != nil {
 			return err

@@ -1,6 +1,6 @@
 {{- /*gotype: github.com/go-sphere/sphere/database/bind.bindContext*/ -}}
-func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.TargetPkgName}}.{{.TargetName}}, options ...bind.Option) *{{.SourcePkgName}}.{{.ActionName}} {
-	option := bind.NewBindOptions(options...)
+func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.TargetPkgName}}.{{.TargetName}}, options ...Option) *{{.SourcePkgName}}.{{.ActionName}} {
+	option := NewBindOptions(options...)
 {{- range .Fields}}
 	if option.CanSetField({{.FieldKeyPath}}) {
 		{{- if .TargetFieldIsPtr}} {{/* 当目标字段是指针类型 */}}

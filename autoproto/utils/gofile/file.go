@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -43,4 +44,24 @@ func CreateGoFile(pkgName string, pkgImports [][2]string, body string) string {
 	file.WriteString(")\n\n")
 	file.WriteString(body)
 	return file.String()
+}
+
+type Filenames struct {
+	dir   string
+	names map[string]int
+}
+
+func NewFilenames(dir string) *Filenames {
+	return &Filenames{dir: dir, names: map[string]int{}}
+}
+
+func (f *Filenames) Next(name string) string {
+	count := f.names[name]
+	if count == 0 {
+		return filepath.Join(f.dir, name+".go")
+	} else {
+		count++
+		f.names[name] = count
+		return filepath.Join(f.dir, name+"_"+strconv.Itoa(count)+".go")
+	}
 }
