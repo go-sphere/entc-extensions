@@ -8,7 +8,7 @@ Utilities that streamline using [ent](https://entgo.io) with protobuf backends. 
 
 ## autoproto
 
-`autoproto` wraps the standard `entproto` pipeline so you get generated protobuf definitions without manually decorating every schema. It also ships Go code generators (under `autoproto/gen`) to keep Ent models and protobuf stubs in sync.
+`autoproto` wraps the standard `entproto` pipeline so you get generated protobuf definitions without manually decorating every schema. It also ships Go code generators (under `entgen`) to keep Ent models and protobuf stubs in sync.
 
 ### Installation
 
@@ -38,22 +38,22 @@ go get github.com/go-sphere/entc-extensions/autoproto
 
 `ProtoOptions.Graph` tunes how the Ent graph is rewritten before `entproto` renders descriptors:
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `AllFieldsRequired` | `true` | When `true`, all optional fields/edges are forced to required; when `false`, proto3 optional markers are injected so the generated `.proto` keeps optional semantics. |
-| `AutoAddAnnotation` | `true` | Auto-injects `entproto.Message`/`entproto.Field` annotations and assigns field numbers, respecting any numbers you already set. |
-| `EnumUseRawType` | `true` | When `true`, enums are rendered as their raw Go type (string/int); set to `false` to emit protobuf enum definitions via `entproto.Enum`. |
-| `SkipUnsupported` | `true` | Unsupported JSON/Other fields get `entproto.Skip`; set to `false` to map them to `UnsupportedProtoType`. |
-| `TimeProtoType` | `"int64"` | Converts `field.Time` to `int64` or `string`. |
-| `UUIDProtoType` | `"string"` | Converts `field.UUID` to a protobuf string. |
-| `UnsupportedProtoType` | `"google.protobuf.Any"` | Message/type used when `SkipUnsupported` is `false` (use `"bytes"` to emit a bytes field). |
-| `ProtoPackages` | `google/protobuf/any.proto,google.protobuf,Any;` | Extra proto imports to register with `entproto`; use `ParseProtoPackages` to build the slice. |
+| Option                 | Default                                          | Description                                                                                                                                                           |
+|------------------------|--------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `AllFieldsRequired`    | `true`                                           | When `true`, all optional fields/edges are forced to required; when `false`, proto3 optional markers are injected so the generated `.proto` keeps optional semantics. |
+| `AutoAddAnnotation`    | `true`                                           | Auto-injects `entproto.Message`/`entproto.Field` annotations and assigns field numbers, respecting any numbers you already set.                                       |
+| `EnumUseRawType`       | `true`                                           | When `true`, enums are rendered as their raw Go type (string/int); set to `false` to emit protobuf enum definitions via `entproto.Enum`.                              |
+| `SkipUnsupported`      | `true`                                           | Unsupported JSON/Other fields get `entproto.Skip`; set to `false` to map them to `UnsupportedProtoType`.                                                              |
+| `TimeProtoType`        | `"int64"`                                        | Converts `field.Time` to `int64` or `string`.                                                                                                                         |
+| `UUIDProtoType`        | `"string"`                                       | Converts `field.UUID` to a protobuf string.                                                                                                                           |
+| `UnsupportedProtoType` | `"google.protobuf.Any"`                          | Message/type used when `SkipUnsupported` is `false` (use `"bytes"` to emit a bytes field).                                                                            |
+| `ProtoPackages`        | `google/protobuf/any.proto,google.protobuf,Any;` | Extra proto imports to register with `entproto`; use `ParseProtoPackages` to build the slice.                                                                         |
 
 `LoadGraph`/`FixGraph` expose the same transformations if you need to adjust a loaded `gen.Graph` outside of the extension flow.
 
 ### Mapper & bind generators
 
-Generators live under `autoproto/gen` and take a shared `FilesConf` (`Dir`, `Package`, `RemoveBeforeGenerate`, `ExtraImports`, `Entities`). Use `conf.NewEntity` to describe a source/target pair and optional ent mutation actions for binders.
+Generators live under `entgen` and take a shared `FilesConf` (`Dir`, `Package`, `RemoveBeforeGenerate`, `ExtraImports`, `Entities`). Use `conf.NewEntity` to describe a source/target pair and optional ent mutation actions for binders.
 
 ```go
 files := &conf.FilesConf{
@@ -68,7 +68,7 @@ files := &conf.FilesConf{
 		),
 	},
 }
-if err := gen.MapperFiles(files); err != nil {
+if err := entgen.MapperFiles(files); err != nil {
 	log.Fatal(err)
 }
 
@@ -84,7 +84,7 @@ bindFiles := &conf.FilesConf{
 		),
 	},
 }
-if err := gen.BindFiles(bindFiles); err != nil {
+if err := entgen.BindFiles(bindFiles); err != nil {
 	log.Fatal(err)
 }
 ```
