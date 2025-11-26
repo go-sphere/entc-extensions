@@ -3,18 +3,18 @@ package main
 import (
 	"log"
 
-	"github.com/go-sphere/entc-extensions/autoproto/gen"
-	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
-	"github.com/go-sphere/entc-extensions/example/autoproto/api/entpb"
-	"github.com/go-sphere/entc-extensions/example/autoproto/ent"
-	"github.com/go-sphere/entc-extensions/example/autoproto/ent/example"
+	"github.com/go-sphere/entc-extensions/entgen"
+	"github.com/go-sphere/entc-extensions/entgen/conf"
+	"github.com/go-sphere/entc-extensions/example/entgen/api/entpb"
+	"github.com/go-sphere/entc-extensions/example/entgen/ent"
+	"github.com/go-sphere/entc-extensions/example/entgen/ent/example"
 )
 
 func main() {
-	if err := gen.MapperFiles(createFilesConf("./mapper", "mapper")); err != nil {
+	if err := entgen.MapperFiles(createFilesConf("./mapper", "mapper")); err != nil {
 		log.Fatal(err)
 	}
-	if err := gen.BindFiles(createFilesConf("./render", "render")); err != nil {
+	if err := entgen.BindFiles(createFilesConf("./render", "render")); err != nil {
 		log.Fatal(err)
 	}
 }

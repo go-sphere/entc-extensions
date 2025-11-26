@@ -7,9 +7,9 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
-	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
-	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
+	"github.com/go-sphere/entc-extensions/entgen/conf"
+	"github.com/go-sphere/entc-extensions/entgen/inspect"
+	"github.com/go-sphere/entc-extensions/entgen/strcase"
 )
 
 //go:embed func.tmpl

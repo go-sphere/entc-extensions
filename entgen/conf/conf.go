@@ -1,6 +1,8 @@
 package conf
 
-import "github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
+import (
+	"github.com/go-sphere/entc-extensions/entgen/inspect"
+)
 
 type FilesConf struct {
 	Dir                  string

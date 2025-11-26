@@ -1,15 +1,15 @@
-package gen
+package entgen
 
 import (
 	_ "embed"
 	"fmt"
 	"strings"
 
-	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
-	"github.com/go-sphere/entc-extensions/autoproto/gen/mapper"
-	"github.com/go-sphere/entc-extensions/autoproto/utils/gofile"
-	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
-	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
+	"github.com/go-sphere/entc-extensions/entgen/conf"
+	"github.com/go-sphere/entc-extensions/entgen/gofile"
+	"github.com/go-sphere/entc-extensions/entgen/inspect"
+	"github.com/go-sphere/entc-extensions/entgen/mapper"
+	"github.com/go-sphere/entc-extensions/entgen/strcase"
 )
 
 // MapperFiles generates mapper files for the provided configuration and writes them to the specified directory.

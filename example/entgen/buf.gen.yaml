@@ -3,7 +3,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/go-sphere/autoproto
+      value: github.com/go-sphere/entc-extensions/example/entgen
 plugins:
   - local: protoc-gen-go
     out: api
