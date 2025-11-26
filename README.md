@@ -8,11 +8,7 @@ Utilities that streamline using [ent](https://entgo.io) with protobuf backends. 
 
 ## autoproto
 
-`autoproto` wraps the standard `entproto` pipeline so you get generated protobuf definitions without manually decorating every schema. It consists of three cooperating parts:
-
-- **Extension** – `autoproto.NewAutoProtoExtension` fixes the in-memory `entc` graph, injects sensible defaults (field numbering, proto3 optional handling, enum conversions), and prints `.proto` files via `entproto` once the Ent graph is generated.
-- **Mapper generator** – `autoproto/mapper` produces one file per entity that converts between Ent structs and the Go types produced by `protoc`/`buf`.
-- **Bind generator** – `autoproto/bind` emits helpers that populate Ent mutations (`*Create`, `*Update`, etc.) from protobuf messages.
+`autoproto` wraps the standard `entproto` pipeline so you get generated protobuf definitions without manually decorating every schema. It also ships Go code generators (under `autoproto/gen`) to keep Ent models and protobuf stubs in sync.
 
 ### Installation
 
@@ -20,70 +16,95 @@ Utilities that streamline using [ent](https://entgo.io) with protobuf backends. 
 go get github.com/go-sphere/entc-extensions/autoproto
 ```
 
-### Quick start
+### Use the entc extension
 
 1. Add the extension to your `entc.Generate` invocation:
 
    ```go
-   err := entc.Generate("./schema", &gen.Config{ /* ... */ },
-	   entc.Extensions(autoproto.NewAutoProtoExtension(&autoproto.ProtoOptions{
-		   Graph:    autoproto.NewDefaultGraphOptions(),
-		   ProtoDir: "./proto",
-	   })))
+   err := entc.Generate("./schema", &gen.Config{
+   	Target: "./ent",
+   	// other ent options...
+   }, entc.Extensions(autoproto.NewAutoProtoExtension(&autoproto.ProtoOptions{
+   	Graph:    autoproto.NewDefaultGraphOptions(),
+   	ProtoDir: "./proto",
+   })))
    ```
 
-2. Run your codegen (see `example/autoproto/cmd/ent`). The extension fixes schema annotations and writes `.proto` files into `ProtoDir` (defaults to `ent/<pkg>/proto`).
+2. Run your codegen (see `example/autoproto/cmd/ent`). The extension fixes schema annotations, applies the type/enum/optional rules in `GraphOptions`, and writes compact `.proto` files into `ProtoDir`.
 
-3. Use `buf` or `protoc` to generate Go stubs from the emitted `.proto` files, then run the mapper/binder generators similar to `example/autoproto/cmd/bind` to keep your Ent models and protobuf API in sync.
+3. Use `buf` or `protoc` to generate Go stubs from the emitted `.proto` files, then run the mapper/binder generators (see below) to keep your Ent models and protobuf API in sync.
 
 ### Graph options
 
-`ProtoOptions.Graph` accepts fine-grained knobs to align Ent types with protobuf expectations:
+`ProtoOptions.Graph` tunes how the Ent graph is rewritten before `entproto` renders descriptors:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `AllFieldsRequired` | `true` | Force fields/edges to be non-optional unless annotated; when `false`, `FieldIsProto3Optional` markers are added so generated protos keep optional semantics. |
-| `AutoAddAnnotation` | `true` | Automatically inject `entproto.Message` and `entproto.Field` annotations so your schemas stay clean. |
-| `EnumUseRawType` | `true` | When set, enum fields fall back to their raw Go type (string/int) instead of emitting a protobuf enum definition. |
-| `SkipUnsupported` | `true` | Unsupported field types get an `entproto.Skip` annotation; when `false`, they map to `UnsupportedProtoType`. |
+| `AllFieldsRequired` | `true` | When `true`, all optional fields/edges are forced to required; when `false`, proto3 optional markers are injected so the generated `.proto` keeps optional semantics. |
+| `AutoAddAnnotation` | `true` | Auto-injects `entproto.Message`/`entproto.Field` annotations and assigns field numbers, respecting any numbers you already set. |
+| `EnumUseRawType` | `true` | When `true`, enums are rendered as their raw Go type (string/int); set to `false` to emit protobuf enum definitions via `entproto.Enum`. |
+| `SkipUnsupported` | `true` | Unsupported JSON/Other fields get `entproto.Skip`; set to `false` to map them to `UnsupportedProtoType`. |
 | `TimeProtoType` | `"int64"` | Converts `field.Time` to `int64` or `string`. |
-| `UUIDProtoType` | `"string"` | Converts `field.UUID` into a protobuf string field. |
-| `UnsupportedProtoType` | `"google.protobuf.Any"` | Target message used when `SkipUnsupported` is disabled. |
-| `ProtoPackages` | `google/protobuf/any.proto,google.protobuf,Any;` | Extra well-known-type style imports to register before printing files. |
+| `UUIDProtoType` | `"string"` | Converts `field.UUID` to a protobuf string. |
+| `UnsupportedProtoType` | `"google.protobuf.Any"` | Message/type used when `SkipUnsupported` is `false` (use `"bytes"` to emit a bytes field). |
+| `ProtoPackages` | `google/protobuf/any.proto,google.protobuf,Any;` | Extra proto imports to register with `entproto`; use `ParseProtoPackages` to build the slice. |
 
-### Mapper & bind helpers
+`LoadGraph`/`FixGraph` expose the same transformations if you need to adjust a loaded `gen.Graph` outside of the extension flow.
 
-Both helpers follow the same pattern: describe source/target pairs and let the generator write formatted Go files.
+### Mapper & bind generators
+
+Generators live under `autoproto/gen` and take a shared `FilesConf` (`Dir`, `Package`, `RemoveBeforeGenerate`, `ExtraImports`, `Entities`). Use `conf.NewEntity` to describe a source/target pair and optional ent mutation actions for binders.
 
 ```go
-// Mapper — converts between ent.{Entity} and entpb.{Entity}.
-err := mapper.GenerateFiles(&mapper.GenFilesConf{
-	Dir: "./mapper",
-	Entities: []mapper.GenFileEntityConf{{
-		Source: ent.Example{},
-		Target: entpb.Example{},
-	}},
-})
+files := &conf.FilesConf{
+	Dir:     "./mapper",
+	Package: "mapper",
+	Entities: []*conf.EntityConf{
+		conf.NewEntity(
+			ent.Example{},
+			entpb.Example{},
+			nil,
+			conf.WithIgnoreFields(example.FieldID),
+		),
+	},
+}
+if err := gen.MapperFiles(files); err != nil {
+	log.Fatal(err)
+}
 
-// Bind — populates ent mutations from protobuf payloads.
-err := bind.GenFiles(&bind.GenFilesConf{
-	Dir: "./render",
-	Entities: []bind.GenFileEntityConf{{
-		Source:  ent.Example{},
-		Target:  entpb.Example{},
-		Actions: []any{ent.ExampleCreate{}},
-	}},
-})
+bindFiles := &conf.FilesConf{
+	Dir:     "./render",
+	Package: "render",
+	Entities: []*conf.EntityConf{
+		conf.NewEntity(
+			ent.Example{},
+			entpb.Example{},
+			[]any{ent.ExampleCreate{}}, // ent mutations to generate bind helpers for
+			conf.WithIgnoreFields(example.FieldID),
+		),
+	},
+}
+if err := gen.BindFiles(bindFiles); err != nil {
+	log.Fatal(err)
+}
 ```
 
-See `example/autoproto/cmd/bind` for a more complete setup that regenerates binding helpers alongside mappers after running `buf generate`.
+Mapper output provides `ToProto{Entity}` and `ToProto{Entity}List` functions that map exported fields with matching (snake-cased) names and allow per-call modifiers for special cases. Bind output creates one function per ent mutation (e.g. `CreateExample`) plus an `options.go` helper file.
+
+Generated binders accept `options ...Option` at call sites:
+
+- `IgnoreField(...)` / `KeepFieldsOnly(...)` – skip or explicitly allow fields (use ent field constants, e.g. `example.FieldName`).
+- `IgnoreSetZeroField(...)` – only set a field when the protobuf value is non-zero.
+- `ClearOnNilField(...)` – when the protobuf field is `nil`, call the ent mutation’s `Clear<Field>` setter if available.
+
+Extra imports can be supplied as `[2]string{path, alias}` entries; aliases are optional and deduplicated automatically. `RemoveBeforeGenerate` wipes the output directory before generation if you want a clean slate.
 
 ### Example project
 
-The `example/autoproto` folder demonstrates the full workflow:
+`example/autoproto` demonstrates the full pipeline:
 
-- `make run` cleans previous artifacts, runs `entc`, generates protobuf code via `buf`, and regenerates the mapper/binder helpers.
-- `cmd/ent` shows how to configure the extension, while `cmd/bind` orchestrates the mapper/bind generators.
+- `make run` cleans previous artifacts, runs `entc` with the extension, generates protobuf code via `buf`, and regenerates mapper/bind helpers.
+- `cmd/ent` configures the extension; `cmd/bind` wires the generators.
 - Generated assets end up in `example/autoproto/{ent,proto,api,mapper,render}`.
 
 ## License
