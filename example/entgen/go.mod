@@ -3,14 +3,12 @@ module github.com/go-sphere/entc-extensions/example/entgen
 go 1.25
 
 replace (
-	github.com/go-sphere/entc-extensions/autoproto => ../../autoproto
-	github.com/go-sphere/entc-extensions/entgen => ../../entgen
+	github.com/go-sphere/entc-extensions => ../..
 )
 
 require (
 	entgo.io/ent v0.14.5
-	github.com/go-sphere/entc-extensions/autoproto v0.0.0-00010101000000-000000000000
-	github.com/go-sphere/entc-extensions/entgen v0.0.0-00010101000000-000000000000
+	github.com/go-sphere/entc-extensions v0.0.0-00010101000000-000000000000
 	google.golang.org/protobuf v1.36.10
 )
 
