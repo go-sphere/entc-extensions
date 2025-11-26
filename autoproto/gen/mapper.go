@@ -3,7 +3,6 @@ package gen
 import (
 	_ "embed"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
@@ -17,17 +16,10 @@ import (
 // It creates the directory if it does not exist and optionally removes its contents before generating new files.
 // Returns an error if configuration is incomplete or file operations fail.
 func MapperFiles(conf *conf.FilesConf) error {
-	if conf.Dir == "" {
-		return fmt.Errorf("directory is required")
+	if err := gofile.CreateDir(conf.Dir, conf.RemoveBeforeGenerate); err != nil {
+		return err
 	}
-	if conf.RemoveBeforeGenerate {
-		if err := os.RemoveAll(conf.Dir); err != nil {
-			return fmt.Errorf("cleanup mapper dir: %w", err)
-		}
-	}
-	if err := os.MkdirAll(conf.Dir, 0o755); err != nil {
-		return fmt.Errorf("create mapper dir: %w", err)
-	}
+
 	pkgName := conf.Package
 	if pkgName == "" {
 		pkgName = "mapper"

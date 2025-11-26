@@ -3,7 +3,6 @@ package gen
 import (
 	_ "embed"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/go-sphere/entc-extensions/autoproto/gen/bind"
@@ -17,17 +16,10 @@ import (
 // It supports options to clean the directory before generation and allows specifying additional imports and package names.
 // Returns an error if directory operations, file writing, or file generation fail.
 func BindFiles(conf *conf.FilesConf) error {
-	if conf.Dir == "" {
-		return fmt.Errorf("directory is required")
+	if err := gofile.CreateDir(conf.Dir, conf.RemoveBeforeGenerate); err != nil {
+		return err
 	}
-	if conf.RemoveBeforeGenerate {
-		if err := os.RemoveAll(conf.Dir); err != nil {
-			return fmt.Errorf("cleanup bind dir: %w", err)
-		}
-	}
-	if err := os.MkdirAll(conf.Dir, 0o755); err != nil {
-		return fmt.Errorf("create bind dir: %w", err)
-	}
+
 	pkgName := conf.Package
 	if pkgName == "" {
 		pkgName = "bind"

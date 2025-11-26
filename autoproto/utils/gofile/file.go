@@ -46,6 +46,21 @@ func CreateGoFile(pkgName string, pkgImports [][2]string, body string) string {
 	return file.String()
 }
 
+func CreateDir(dir string, removeBeforeGenerate bool) error {
+	if dir == "" {
+		return fmt.Errorf("directory is required")
+	}
+	if removeBeforeGenerate {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("cleanup dir: %w", err)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create dir: %w", err)
+	}
+	return nil
+}
+
 type Filenames struct {
 	dir   string
 	names map[string]int
