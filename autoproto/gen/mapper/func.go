@@ -7,22 +7,16 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
 	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
 	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
 )
 
-//go:embed mapper.tmpl
+//go:embed func.tmpl
 var mapperTemplate string
 
-// GenMapperConf configures the generation of mapper functions for a single entity pair.
-type GenMapperConf struct {
-	Source       any
-	Target       any
-	IgnoreFields []string
-}
-
 // GenMapperFunc renders the mapper functions for the provided configuration.
-func GenMapperFunc(conf *GenMapperConf) (string, error) {
+func GenMapperFunc(conf *conf.EntityConf) (string, error) {
 	sourceName := inspect.TypeName(conf.Source)
 	targetName := inspect.TypeName(conf.Target)
 
@@ -68,7 +62,8 @@ func GenMapperFunc(conf *GenMapperConf) (string, error) {
 	}
 
 	var builder strings.Builder
-	if err := tmpl.ExecuteTemplate(&builder, "mapper", ctx); err != nil {
+	err = tmpl.ExecuteTemplate(&builder, "mapper", ctx)
+	if err != nil {
 		return "", err
 	}
 	return builder.String(), nil

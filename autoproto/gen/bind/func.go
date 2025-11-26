@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/go-sphere/entc-extensions/autoproto/gen/conf"
 	"github.com/go-sphere/entc-extensions/autoproto/utils/inspect"
 	"github.com/go-sphere/entc-extensions/autoproto/utils/strcase"
 )
@@ -14,69 +15,19 @@ import (
 //go:embed func.tmpl
 var genBindFuncTemplate string
 
-// GenBindConf holds configuration for generating binding functions between different data structures.
-// It's commonly used for generating code that converts between ORM entities and Protocol Buffer messages.
-type GenBindConf struct {
-	source        any      // entity entity, e.g. entity.Example
-	target        any      // protobuf entity, e.g. entpb.Example
-	action        any      // entity operation, e.g. entity.ExampleCreate, entity.ExampleUpdateOne
-	IgnoreFields  []string // fields to ignore, e.g.  example.FieldID, example.FieldCreatedAt
-	SourcePkgName string   // package name of source, e.g. "entity"
-	TargetPkgName string   // package name of target, e.g. "entpb"
-}
-
-// NewGenBindConf creates a new configuration for binding function generation.
-// It automatically determines package names from the provided source and target types.
-func NewGenBindConf(source, target, action any) *GenBindConf {
-	return &GenBindConf{
-		source:        source,
-		target:        target,
-		action:        action,
-		IgnoreFields:  nil,
-		SourcePkgName: inspect.ExtractPackageName(source),
-		TargetPkgName: inspect.ExtractPackageName(target),
-	}
-}
-
-type GenBindConfOption func(*GenBindConf)
-
-// WithSourcePkgName sets a custom package name for the source type.
-// Returns the modified configuration for method chaining.
-func WithSourcePkgName(pkgName string) GenBindConfOption {
-	return func(conf *GenBindConf) {
-		conf.SourcePkgName = pkgName
-	}
-}
-
-// WithTargetPkgName sets a custom package name for the target type.
-// Returns the modified configuration for method chaining.
-func WithTargetPkgName(pkgName string) GenBindConfOption {
-	return func(conf *GenBindConf) {
-		conf.TargetPkgName = pkgName
-	}
-}
-
-// WithIgnoreFields specifies field names that should be ignored during binding generation.
-// Returns the modified configuration for method chaining.
-func WithIgnoreFields(fields ...string) GenBindConfOption {
-	return func(conf *GenBindConf) {
-		conf.IgnoreFields = fields
-	}
-}
-
 // GenBindFunc generates Go code for binding functions based on the provided configuration.
 // It creates functions that can convert between source and target types using reflection
 // to analyze field mappings and generate appropriate setter calls.
 // Returns the generated Go code as a string or an error if generation fails.
-func GenBindFunc(conf *GenBindConf) (string, error) {
-	actionName := inspect.TypeName(conf.action)
-	sourceName := inspect.TypeName(conf.source)
-	targetName := inspect.TypeName(conf.target)
+func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
+	actionName := inspect.TypeName(action)
+	sourceName := inspect.TypeName(conf.Source)
+	targetName := inspect.TypeName(conf.Target)
 	funcName := strings.Replace(actionName, sourceName, "", 1) + sourceName
 
-	keys, sourceFields := inspect.ExtractPublicFields(conf.source, strcase.ToSnake)
-	_, targetFields := inspect.ExtractPublicFields(conf.target, strcase.ToSnake)
-	_, actionMethods := inspect.ExtractPublicMethods(conf.action, strcase.ToSnake)
+	keys, sourceFields := inspect.ExtractPublicFields(conf.Source, strcase.ToSnake)
+	_, targetFields := inspect.ExtractPublicFields(conf.Target, strcase.ToSnake)
+	_, actionMethods := inspect.ExtractPublicMethods(action, strcase.ToSnake)
 
 	context := bindContext{
 		SourcePkgName: conf.SourcePkgName,
@@ -93,13 +44,13 @@ func GenBindFunc(conf *GenBindConf) (string, error) {
 	for _, field := range conf.IgnoreFields {
 		ignoreFields[strings.ToLower(field)] = true
 	}
-	table := inspect.TypeName(conf.source)
+	table := inspect.TypeName(conf.Source)
 
 	for _, n := range keys {
 		if ignoreFields[n] {
 			continue
 		}
-		sourceField, ok := sourceFields[n] // entity.Example
+		sourceField, ok := sourceFields[n] // ent.Example
 		if !ok {
 			continue
 		}
@@ -141,7 +92,7 @@ func GenBindFunc(conf *GenBindConf) (string, error) {
 		context.Fields = append(context.Fields, field)
 	}
 
-	parse, err := template.New("gen").Funcs(template.FuncMap{
+	parse, err := template.New("bind").Funcs(template.FuncMap{
 		"GenZeroCheck":    inspect.GenerateZeroCheckExpr,
 		"GenNotZeroCheck": inspect.GenerateNonZeroCheckExpr,
 		"ToSnakeCase":     strcase.ToSnake,

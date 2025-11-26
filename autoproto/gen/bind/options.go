@@ -10,7 +10,7 @@ type Options struct {
 }
 
 // NewBindOptions creates a new Options instance with the provided option functions applied.
-// This is the recommended way to create binding options with custom configurations.
+// This is the recommended way to create binding conf with custom configurations.
 func NewBindOptions(options ...Option) *Options {
 	defaults := &Options{}
 	for _, opt := range options {
