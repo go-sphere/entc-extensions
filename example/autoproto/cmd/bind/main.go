@@ -11,18 +11,18 @@ import (
 )
 
 func main() {
-	if err := gen.MapperFiles(createFilesConf()); err != nil {
+	if err := gen.MapperFiles(createFilesConf("./mapper", "mapper")); err != nil {
 		log.Fatal(err)
 	}
-	if err := gen.BindFiles(createFilesConf()); err != nil {
+	if err := gen.BindFiles(createFilesConf("./render", "render")); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func createFilesConf() *conf.FilesConf {
+func createFilesConf(dir, pkg string) *conf.FilesConf {
 	return &conf.FilesConf{
-		Dir:                  "./mapper",
-		Package:              "mapper",
+		Dir:                  dir,
+		Package:              pkg,
 		RemoveBeforeGenerate: false,
 		Entities: []*conf.EntityConf{
 			conf.NewEntity(
