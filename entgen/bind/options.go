@@ -1,6 +1,6 @@
 package bind
 
-// Options controls the behavior of binding operations through various field-level configurations.
+// Options control the behavior of binding operations through various field-level configurations.
 // It provides fine-grained control over how fields are processed during data binding.
 type Options struct {
 	ignoreSetZeroFields map[string]struct{}
