@@ -69,7 +69,7 @@ func FixGraph(graph *gen.Graph, options *GraphOptions) *gen.Graph {
 
 func addAnnotationForNode(node *gen.Type, options *GraphOptions) {
 	if node.Annotations == nil {
-		node.Annotations = make(map[string]interface{}, 1)
+		node.Annotations = make(map[string]any, 1)
 	}
 	if node.Annotations[entproto.MessageAnnotation] != nil {
 		return
@@ -95,7 +95,7 @@ func addAnnotationForNode(node *gen.Type, options *GraphOptions) {
 
 func addAnnotationForEdge(fd *gen.Edge, idGenerator *fieldIDGenerator, options *GraphOptions) {
 	if fd.Annotations == nil {
-		fd.Annotations = make(map[string]interface{}, 1)
+		fd.Annotations = make(map[string]any, 1)
 	}
 	if fd.Annotations[entproto.FieldAnnotation] != nil {
 		return
@@ -114,7 +114,7 @@ func addAnnotationForEdge(fd *gen.Edge, idGenerator *fieldIDGenerator, options *
 
 func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator, options *GraphOptions) {
 	if fd.Annotations == nil {
-		fd.Annotations = make(map[string]interface{}, 1)
+		fd.Annotations = make(map[string]any, 1)
 	}
 	if fd.Annotations[entproto.FieldAnnotation] != nil {
 		return
@@ -348,7 +348,7 @@ func injectProtoPackages(pkg []ProtoPackage) {
 
 func ParseProtoPackages(raw string) []ProtoPackage {
 	res := make([]ProtoPackage, 0)
-	for _, pkg := range strings.Split(raw, ";") {
+	for pkg := range strings.SplitSeq(raw, ";") {
 		parts := strings.Split(pkg, ",")
 		if len(parts) < 3 {
 			continue

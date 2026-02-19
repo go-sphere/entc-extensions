@@ -65,7 +65,7 @@ func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
 		}
 		settNillable, hasSettNillable := actionMethods[strcase.ToSnake(fmt.Sprintf("SetNillable%s", sourceField.Name))]
 		clearOnNil, hasClearOnNil := actionMethods[strcase.ToSnake(fmt.Sprintf("Clear%s", sourceField.Name))]
-		targetFieldIsPtr := targetField.Type.Kind() == reflect.Ptr
+		targetFieldIsPtr := targetField.Type.Kind() == reflect.Pointer
 
 		field := fieldContext{
 			FieldKeyPath: fmt.Sprintf("%s.Field%s", strings.ToLower(table), sourceField.Name),

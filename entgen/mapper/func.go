@@ -110,7 +110,7 @@ func buildFieldContext(sourceField, targetField reflect.StructField) (*fieldCont
 		}, true
 	}
 
-	if sourceField.Type.Kind() == reflect.Ptr {
+	if sourceField.Type.Kind() == reflect.Pointer {
 		guard := fmt.Sprintf("%s != nil", sExpr)
 		if expr, ok := buildAssignmentExpr("*"+sExpr, sourceField.Type.Elem(), targetField.Type); ok {
 			return &fieldContext{
@@ -121,7 +121,7 @@ func buildFieldContext(sourceField, targetField reflect.StructField) (*fieldCont
 		}
 	}
 
-	if targetField.Type.Kind() == reflect.Ptr && sourceField.Type.Kind() != reflect.Ptr {
+	if targetField.Type.Kind() == reflect.Pointer && sourceField.Type.Kind() != reflect.Pointer {
 		if expr, ok := buildAssignmentExpr(sExpr, sourceField.Type, targetField.Type.Elem()); ok {
 			typeName := targetField.Type.Elem().String()
 			wrapped := fmt.Sprintf("func(v %s) *%s { return &v }(%s)", typeName, typeName, expr)

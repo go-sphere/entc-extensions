@@ -10,7 +10,7 @@ import (
 
 // IndirectValue recursively dereferences pointers until a non-pointer value is reached.
 func IndirectValue(value reflect.Value) reflect.Value {
-	for value.Kind() == reflect.Ptr {
+	for value.Kind() == reflect.Pointer {
 		value = value.Elem()
 	}
 	return value
@@ -84,7 +84,7 @@ func ExtractPublicMethods(obj any, keyMapper func(string) string) ([]string, map
 	if t.Kind() == reflect.Interface {
 		return nil, nil
 	}
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -116,7 +116,7 @@ func ExtractPublicMethods(obj any, keyMapper func(string) string) ([]string, map
 
 // GenerateZeroCheckExpr generates Go code that checks if a struct field contains its zero value.
 func GenerateZeroCheckExpr(sourceName string, field reflect.StructField) string {
-	if field.Type.Kind() == reflect.Ptr {
+	if field.Type.Kind() == reflect.Pointer {
 		return fmt.Sprintf("%s.%s == nil", sourceName, field.Name)
 	}
 	switch field.Type.Kind() {
@@ -138,7 +138,7 @@ func GenerateZeroCheckExpr(sourceName string, field reflect.StructField) string 
 
 // GenerateNonZeroCheckExpr generates Go code that checks if a struct field contains a non-zero value.
 func GenerateNonZeroCheckExpr(sourceName string, field reflect.StructField) string {
-	if field.Type.Kind() == reflect.Ptr {
+	if field.Type.Kind() == reflect.Pointer {
 		return fmt.Sprintf("%s.%s != nil", sourceName, field.Name)
 	}
 	switch field.Type.Kind() {
