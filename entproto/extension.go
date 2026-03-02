@@ -44,6 +44,7 @@ type Extension struct {
 	entc.DefaultExtension
 	protoDir    string
 	skipGenFile bool
+	autoFill    bool
 }
 
 // WithProtoDir sets the directory where the generated .proto files will be written.
@@ -57,6 +58,15 @@ func WithProtoDir(dir string) ExtensionOption {
 func SkipGenFile() ExtensionOption {
 	return func(e *Extension) {
 		e.skipGenFile = true
+	}
+}
+
+// WithAutoFill enables automatic generation of entproto annotations.
+// When enabled, schemas without Message annotation will get one automatically,
+// and all fields/edges without Field annotation will be annotated with auto-generated field numbers.
+func WithAutoFill() ExtensionOption {
+	return func(e *Extension) {
+		e.autoFill = true
 	}
 }
 
@@ -74,6 +84,9 @@ func (e *Extension) hook() gen.Hook {
 			err := next.Generate(g)
 			if err != nil {
 				return err
+			}
+			if e.autoFill {
+				FixGraph(g)
 			}
 			return e.generate(g)
 		})

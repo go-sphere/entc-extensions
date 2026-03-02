@@ -93,3 +93,42 @@ func TestSkipMessage(t *testing.T) {
 	require.EqualValues(t, 5, postsField.GetNumber())
 	require.Equal(t, "TYPE_MESSAGE", postsField.GetType().String())
 }
+
+func TestAutoFill(t *testing.T) {
+	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{})
+	require.NoError(t, err)
+
+	// Apply auto-fill to graph
+	FixGraph(graph)
+
+	adapter, err := LoadAdapter(graph)
+	require.NoError(t, err)
+
+	// Test Item schema which has no entproto annotations
+	// After FixGraph, it should have auto-generated annotations
+	fd, err := adapter.GetFileDescriptor("Item")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("entpb", "entpb.proto"), fd.GetName())
+
+	msg := fd.FindMessage("entpb.Item")
+	require.NotNil(t, msg)
+
+	idField := msg.FindFieldByName("id")
+	require.NotNil(t, idField)
+	require.EqualValues(t, 1, idField.GetNumber())
+
+	nameField := msg.FindFieldByName("name")
+	require.NotNil(t, nameField)
+	require.EqualValues(t, 2, nameField.GetNumber())
+	require.Equal(t, "TYPE_STRING", nameField.GetType().String())
+
+	quantityField := msg.FindFieldByName("quantity")
+	require.NotNil(t, quantityField)
+	require.EqualValues(t, 3, quantityField.GetNumber())
+	require.Equal(t, "TYPE_INT64", quantityField.GetType().String())
+
+	availableField := msg.FindFieldByName("available")
+	require.NotNil(t, availableField)
+	require.EqualValues(t, 4, availableField.GetNumber())
+	require.Equal(t, "TYPE_BOOL", availableField.GetType().String())
+}
