@@ -8,7 +8,7 @@ import (
 
 var typeMap = map[field.Type]typeConfig{
 	field.TypeBool:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_BOOL},
-	field.TypeTime:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, msgTypeName: "google.protobuf.Timestamp"},
+	field.TypeTime:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_INT64},
 	field.TypeOther:  {unsupported: true},
 	field.TypeUUID:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_BYTES},
 	field.TypeBytes:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_BYTES},

@@ -6,129 +6,228 @@ import (
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
-	"github.com/stretchr/testify/require"
 )
 
 func TestLoadAdapter(t *testing.T) {
 	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("LoadGraph failed: %v", err)
+	}
 
 	adapter, err := LoadAdapter(graph)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("LoadAdapter failed: %v", err)
+	}
 
 	// Test User message
 	fd, err := adapter.GetFileDescriptor("User")
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join("entpb", "entpb.proto"), fd.GetName())
+	if err != nil {
+		t.Fatalf("GetFileDescriptor failed: %v", err)
+	}
+	if got, want := fd.GetName(), filepath.Join("entpb", "entpb.proto"); got != want {
+		t.Errorf("fd.GetName() = %v, want %v", got, want)
+	}
 
 	msg := fd.FindMessage("entpb.User")
-	require.NotNil(t, msg)
+	if msg == nil {
+		t.Fatal("msg is nil")
+	}
 
 	idField := msg.FindFieldByName("id")
-	require.NotNil(t, idField)
-	require.EqualValues(t, 1, idField.GetNumber())
+	if idField == nil {
+		t.Fatal("idField is nil")
+	}
+	if idField.GetNumber() != 1 {
+		t.Errorf("idField.GetNumber() = %v, want 1", idField.GetNumber())
+	}
 
 	nameField := msg.FindFieldByName("name")
-	require.NotNil(t, nameField)
-	require.EqualValues(t, 2, nameField.GetNumber())
-	require.Equal(t, "TYPE_STRING", nameField.GetType().String())
+	if nameField == nil {
+		t.Fatal("nameField is nil")
+	}
+	if nameField.GetNumber() != 2 {
+		t.Errorf("nameField.GetNumber() = %v, want 2", nameField.GetNumber())
+	}
+	if nameField.GetType().String() != "TYPE_STRING" {
+		t.Errorf("nameField.GetType() = %v, want TYPE_STRING", nameField.GetType())
+	}
 
 	ageField := msg.FindFieldByName("age")
-	require.NotNil(t, ageField)
-	require.EqualValues(t, 3, ageField.GetNumber())
+	if ageField == nil {
+		t.Fatal("ageField is nil")
+	}
+	if ageField.GetNumber() != 3 {
+		t.Errorf("ageField.GetNumber() = %v, want 3", ageField.GetNumber())
+	}
 
 	activeField := msg.FindFieldByName("active")
-	require.NotNil(t, activeField)
-	require.EqualValues(t, 4, activeField.GetNumber())
+	if activeField == nil {
+		t.Fatal("activeField is nil")
+	}
+	if activeField.GetNumber() != 4 {
+		t.Errorf("activeField.GetNumber() = %v, want 4", activeField.GetNumber())
+	}
 
 	// Test Post message
 	fd, err = adapter.GetFileDescriptor("Post")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("GetFileDescriptor failed: %v", err)
+	}
 
 	msg = fd.FindMessage("entpb.Post")
-	require.NotNil(t, msg)
+	if msg == nil {
+		t.Fatal("msg is nil")
+	}
 
 	titleField := msg.FindFieldByName("title")
-	require.NotNil(t, titleField)
-	require.EqualValues(t, 2, titleField.GetNumber())
+	if titleField == nil {
+		t.Fatal("titleField is nil")
+	}
+	if titleField.GetNumber() != 2 {
+		t.Errorf("titleField.GetNumber() = %v, want 2", titleField.GetNumber())
+	}
 
 	authorField := msg.FindFieldByName("author")
-	require.NotNil(t, authorField)
-	require.EqualValues(t, 4, authorField.GetNumber())
+	if authorField == nil {
+		t.Fatal("authorField is nil")
+	}
+	if authorField.GetNumber() != 4 {
+		t.Errorf("authorField.GetNumber() = %v, want 4", authorField.GetNumber())
+	}
 
 	// Test Task message (enum)
 	fd, err = adapter.GetFileDescriptor("Task")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("GetFileDescriptor failed: %v", err)
+	}
 
 	msg = fd.FindMessage("entpb.Task")
-	require.NotNil(t, msg)
+	if msg == nil {
+		t.Fatal("msg is nil")
+	}
 
 	statusField := msg.FindFieldByName("status")
-	require.NotNil(t, statusField)
-	require.EqualValues(t, 3, statusField.GetNumber())
-	require.Equal(t, "TYPE_ENUM", statusField.GetType().String())
+	if statusField == nil {
+		t.Fatal("statusField is nil")
+	}
+	if statusField.GetNumber() != 3 {
+		t.Errorf("statusField.GetNumber() = %v, want 3", statusField.GetNumber())
+	}
+	if statusField.GetType().String() != "TYPE_ENUM" {
+		t.Errorf("statusField.GetType() = %v, want TYPE_ENUM", statusField.GetType())
+	}
 
 	enumType := statusField.GetEnumType()
-	require.NotNil(t, enumType)
-	require.Equal(t, "entpb.Task.Status", enumType.GetFullyQualifiedName())
+	if enumType == nil {
+		t.Fatal("enumType is nil")
+	}
+	if enumType.GetFullyQualifiedName() != "entpb.Task.Status" {
+		t.Errorf("enumType.GetFullyQualifiedName() = %v, want entpb.Task.Status", enumType.GetFullyQualifiedName())
+	}
 }
 
 func TestSkipMessage(t *testing.T) {
 	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("LoadGraph failed: %v", err)
+	}
 
 	adapter, err := LoadAdapter(graph)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("LoadAdapter failed: %v", err)
+	}
 
 	// Test that edges are converted to fields
 	fd, err := adapter.GetFileDescriptor("User")
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("GetFileDescriptor failed: %v", err)
+	}
 
 	msg := fd.FindMessage("entpb.User")
-	require.NotNil(t, msg)
+	if msg == nil {
+		t.Fatal("msg is nil")
+	}
 
 	// Check edge field
 	postsField := msg.FindFieldByName("posts")
-	require.NotNil(t, postsField)
-	require.EqualValues(t, 5, postsField.GetNumber())
-	require.Equal(t, "TYPE_MESSAGE", postsField.GetType().String())
+	if postsField == nil {
+		t.Fatal("postsField is nil")
+	}
+	if postsField.GetNumber() != 5 {
+		t.Errorf("postsField.GetNumber() = %v, want 5", postsField.GetNumber())
+	}
+	if postsField.GetType().String() != "TYPE_MESSAGE" {
+		t.Errorf("postsField.GetType() = %v, want TYPE_MESSAGE", postsField.GetType())
+	}
 }
 
 func TestAutoFill(t *testing.T) {
 	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("LoadGraph failed: %v", err)
+	}
 
 	// Apply auto-fill to graph
 	FixGraph(graph)
 
 	adapter, err := LoadAdapter(graph)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("LoadAdapter failed: %v", err)
+	}
 
 	// Test Item schema which has no entproto annotations
 	// After FixGraph, it should have auto-generated annotations
 	fd, err := adapter.GetFileDescriptor("Item")
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join("entpb", "entpb.proto"), fd.GetName())
+	if err != nil {
+		t.Fatalf("GetFileDescriptor failed: %v", err)
+	}
+	if fd.GetName() != filepath.Join("entpb", "entpb.proto") {
+		t.Errorf("fd.GetName() = %v, want %v", fd.GetName(), filepath.Join("entpb", "entpb.proto"))
+	}
 
 	msg := fd.FindMessage("entpb.Item")
-	require.NotNil(t, msg)
+	if msg == nil {
+		t.Fatal("msg is nil")
+	}
 
 	idField := msg.FindFieldByName("id")
-	require.NotNil(t, idField)
-	require.EqualValues(t, 1, idField.GetNumber())
+	if idField == nil {
+		t.Fatal("idField is nil")
+	}
+	if idField.GetNumber() != 1 {
+		t.Errorf("idField.GetNumber() = %v, want 1", idField.GetNumber())
+	}
 
 	nameField := msg.FindFieldByName("name")
-	require.NotNil(t, nameField)
-	require.EqualValues(t, 2, nameField.GetNumber())
-	require.Equal(t, "TYPE_STRING", nameField.GetType().String())
+	if nameField == nil {
+		t.Fatal("nameField is nil")
+	}
+	if nameField.GetNumber() != 2 {
+		t.Errorf("nameField.GetNumber() = %v, want 2", nameField.GetNumber())
+	}
+	if nameField.GetType().String() != "TYPE_STRING" {
+		t.Errorf("nameField.GetType() = %v, want TYPE_STRING", nameField.GetType())
+	}
 
 	quantityField := msg.FindFieldByName("quantity")
-	require.NotNil(t, quantityField)
-	require.EqualValues(t, 3, quantityField.GetNumber())
-	require.Equal(t, "TYPE_INT64", quantityField.GetType().String())
+	if quantityField == nil {
+		t.Fatal("quantityField is nil")
+	}
+	if quantityField.GetNumber() != 3 {
+		t.Errorf("quantityField.GetNumber() = %v, want 3", quantityField.GetNumber())
+	}
+	if quantityField.GetType().String() != "TYPE_INT64" {
+		t.Errorf("quantityField.GetType() = %v, want TYPE_INT64", quantityField.GetType())
+	}
 
 	availableField := msg.FindFieldByName("available")
-	require.NotNil(t, availableField)
-	require.EqualValues(t, 4, availableField.GetNumber())
-	require.Equal(t, "TYPE_BOOL", availableField.GetType().String())
+	if availableField == nil {
+		t.Fatal("availableField is nil")
+	}
+	if availableField.GetNumber() != 4 {
+		t.Errorf("availableField.GetNumber() = %v, want 4", availableField.GetNumber())
+	}
+	if availableField.GetType().String() != "TYPE_BOOL" {
+		t.Errorf("availableField.GetType() = %v, want TYPE_BOOL", availableField.GetType())
+	}
 }

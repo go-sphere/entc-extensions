@@ -13,7 +13,6 @@ import (
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/desc/builder"
 	"google.golang.org/protobuf/types/descriptorpb"
-	_ "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -25,7 +24,6 @@ var (
 	ErrSchemaSkipped   = errors.New("entproto: schema not annotated with Generate=true")
 	repeatedFieldLabel = descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 	wktsPaths          = map[string]string{
-		"google.protobuf.Timestamp": "google/protobuf/timestamp.proto",
 	}
 )
 
