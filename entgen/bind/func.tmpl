@@ -1,17 +1,17 @@
-{{- /*gotype: github.com/go-sphere/sphere/database/bind.bindContext*/ -}}
+{{- /* gotype: . */ -}}
 func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.TargetPkgName}}.{{.TargetName}}, options ...Option) *{{.SourcePkgName}}.{{.ActionName}} {
 	option := NewBindOptions(options...)
 {{- range .Fields}}
 	if option.CanSetField({{.FieldKeyPath}}) {
-		{{- if .TargetFieldIsPtr}} {{/* 当目标字段是指针类型 */}}
-			{{- if .CanSettNillable}} {{/* 如果存在SetNillable方法，直接使用 */}}
-				{{- if .CanClearOnNil}} {{/* 如果存在ClearOnNil，判断是否需要使用 */}}
+		{{- if .TargetFieldIsPtr}}
+			{{- if .CanSettNillable}}
+				{{- if .CanClearOnNil}}
 					if target.{{.TargetField.Name}} == nil && option.ClearOnNil({{.FieldKeyPath}}) {
 						source.{{.ClearOnNilFuncName}}()
 					} else {
-						{{- if .TargetSourceIsSomeType}}{{/* 如果源和目标是相同类型，直接赋值 */}}
+						{{- if .TargetSourceIsSomeType}}
 							source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
-						{{- else}}{{/* 如果类型不同，需要进行类型转换 */}}
+						{{- else}}
 							if target.{{.TargetField.Name}} != nil {
 								source.{{.SetterFuncName}}({{.SourceField.Type.String}}(*target.{{.TargetField.Name}}))
 							} else {
@@ -20,31 +20,30 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 						{{- end}}
 					}
 				{{- else}}
-						{{- if .TargetSourceIsSomeType}}{{/* 如果源和目标是相同类型，直接赋值 */}}
-							source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
-						{{- else}}{{/* 如果类型不同，需要进行类型转换 */}}
-							if target.{{.TargetField.Name}} != nil {
-								source.{{.SetterFuncName}}({{.SourceField.Type.String}}(*target.{{.TargetField.Name}}))
-							} else {
-								source.{{.SettNillableFuncName}}(nil)
-							}
-						{{- end}}
+					{{- if .TargetSourceIsSomeType}}
+						source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
+					{{- else}}
+						if target.{{.TargetField.Name}} != nil {
+							source.{{.SetterFuncName}}({{.SourceField.Type.String}}(*target.{{.TargetField.Name}}))
+						} else {
+							source.{{.SettNillableFuncName}}(nil)
+						}
+					{{- end}}
 				{{- end}}
-			{{- else}} {{/* 否则使用普通Setter方法，但需要解引用 */}}
+			{{- else}}
 				if target.{{.TargetField.Name}} != nil {
-					{{- if .TargetSourceIsSomeType}} {{/* 如果源和目标是相同类型，直接赋值 */}}
+					{{- if .TargetSourceIsSomeType}}
 						source.{{.SetterFuncName}}(*target.{{.TargetField.Name}})
-					{{- else}} {{/* 如果类型不同，需要进行类型转换 */}}
+					{{- else}}
 						source.{{.SetterFuncName}}({{.SourceField.Type.String}}(*target.{{.TargetField.Name}}))
 					{{- end}}
 				}
 			{{- end}}
-        {{ else -}}
-			{{/* 当目标字段不是指针类型 */}}
+		{{- else}}
 			if option.CanSetZero({{.FieldKeyPath}}) || {{GenNotZeroCheck "target" .TargetField}} {
-				{{- if .TargetSourceIsSomeType}}{{/* 如果源和目标是相同类型，直接赋值 */}}
+				{{- if .TargetSourceIsSomeType}}
 					source.{{.SetterFuncName}}(target.{{.TargetField.Name}})
-				{{- else}}{{/* 如果类型不同，需要进行类型转换 */}}
+				{{- else}}
 					source.{{.SetterFuncName}}({{.SourceField.Type.String}}(target.{{.TargetField.Name}}))
 				{{- end}}
 			}

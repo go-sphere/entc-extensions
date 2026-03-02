@@ -50,17 +50,17 @@ func BindFiles(conf *conf.FilesConf) error {
 	return nil
 }
 
-func genBindFile(fileName string, pkgName string, pkgImports [][2]string, item *conf.EntityConf) error {
+func genBindFile(fileName string, pkgName string, pkgImports []inspect.Import, item *conf.EntityConf) error {
 	var body strings.Builder
 
 	pkgImports = append(pkgImports,
-		inspect.ExtractPackageImport(item.Source),
-		inspect.ExtractPackageImport(item.Target),
+		inspect.ExtractImport(item.Source),
+		inspect.ExtractImport(item.Target),
 	)
 
 	for _, act := range item.Actions {
 		pkgImports = append(pkgImports,
-			inspect.ExtractPackageImport(act),
+			inspect.ExtractImport(act),
 		)
 		funcContent, err := bind.GenBindFunc(act, item)
 		if err != nil {

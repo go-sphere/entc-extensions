@@ -39,13 +39,13 @@ func MapperFiles(conf *conf.FilesConf) error {
 	return nil
 }
 
-func genMapperFile(fileName string, pkgName string, pkgImports [][2]string, item *conf.EntityConf) error {
+func genMapperFile(fileName string, pkgName string, pkgImports []inspect.Import, item *conf.EntityConf) error {
 	var body strings.Builder
 
 	pkgImports = append(pkgImports,
-		[2]string{"fmt", ""},
-		inspect.ExtractPackageImport(item.Source),
-		inspect.ExtractPackageImport(item.Target),
+		inspect.Import{Path: "fmt"},
+		inspect.ExtractImport(item.Source),
+		inspect.ExtractImport(item.Target),
 	)
 
 	content, err := mapper.GenMapperFunc(item)

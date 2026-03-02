@@ -25,6 +25,11 @@ func GenMapperFunc(conf *conf.EntityConf) (string, error) {
 
 	ignore := normaliseIgnoreFields(conf.IgnoreFields)
 
+	errorPrefix := conf.ErrorPrefix
+	if errorPrefix == "" {
+		errorPrefix = "entproto"
+	}
+
 	ctx := mapperContext{
 		SourcePkgName: inspect.ExtractPackageName(conf.Source),
 		TargetPkgName: inspect.ExtractPackageName(conf.Target),
@@ -32,6 +37,7 @@ func GenMapperFunc(conf *conf.EntityConf) (string, error) {
 		TargetName:    targetName,
 		FuncName:      fmt.Sprintf("ToProto%s", sourceName),
 		ListFuncName:  fmt.Sprintf("ToProto%sList", sourceName),
+		ErrorPrefix:   errorPrefix,
 	}
 
 	for _, key := range keys {
@@ -91,6 +97,7 @@ type mapperContext struct {
 	TargetName    string
 	FuncName      string
 	ListFuncName  string
+	ErrorPrefix   string
 	Fields        []fieldContext
 }
 

@@ -7,7 +7,7 @@ type FilesConf struct {
 	Dir                  string
 	Package              string
 	RemoveBeforeGenerate bool
-	ExtraImports         [][2]string
+	ExtraImports         []inspect.Import
 	Entities             []*EntityConf
 }
 
@@ -17,7 +17,7 @@ func NewFilesConf(dir string, pkg string, entities ...*EntityConf) *FilesConf {
 		Dir:                  dir,
 		Package:              pkg,
 		RemoveBeforeGenerate: false,
-		ExtraImports:         [][2]string{},
+		ExtraImports:         []inspect.Import{},
 		Entities:             entities,
 	}
 }
@@ -29,7 +29,7 @@ func (f *FilesConf) WithRemoveBeforeGenerate(remove bool) *FilesConf {
 }
 
 // WithExtraImports appends additional import paths and aliases to the ExtraImports field and returns the updated FilesConf instance.
-func (f *FilesConf) WithExtraImports(imports ...[2]string) *FilesConf {
+func (f *FilesConf) WithExtraImports(imports ...inspect.Import) *FilesConf {
 	f.ExtraImports = append(f.ExtraImports, imports...)
 	return f
 }
@@ -43,6 +43,7 @@ type EntityConf struct {
 	IgnoreFields  []string // fields to ignore, e.g. example.FieldID, example.FieldCreatedAt
 	SourcePkgName string   // package name of Source, e.g. "ent"
 	TargetPkgName string   // package name of Target, e.g. "entpb"
+	ErrorPrefix   string   // prefix for error messages, e.g. "entproto"
 }
 
 type EntityConfOption func(*EntityConf)
@@ -85,6 +86,14 @@ func WithTargetPkgName(pkgName string) EntityConfOption {
 func WithIgnoreFields(fields ...string) EntityConfOption {
 	return func(conf *EntityConf) {
 		conf.IgnoreFields = fields
+	}
+}
+
+// WithErrorPrefix sets a custom prefix for error messages.
+// Returns the modified configuration for method chaining.
+func WithErrorPrefix(prefix string) EntityConfOption {
+	return func(conf *EntityConf) {
+		conf.ErrorPrefix = prefix
 	}
 }
 

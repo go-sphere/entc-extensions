@@ -158,20 +158,32 @@ func GenerateNonZeroCheckExpr(sourceName string, field reflect.StructField) stri
 	}
 }
 
-// ExtractPackageImport extracts both the package path and package name from a struct value.
-func ExtractPackageImport(val any) [2]string {
-	return [2]string{
-		ExtractPackagePath(val),
-		ExtractPackageName(val),
+// Import represents a Go import with path and optional alias.
+type Import struct {
+	Path  string
+	Alias string
+}
+
+// ExtractImport extracts both the package path and package name from a struct value.
+func ExtractImport(val any) Import {
+	return Import{
+		Path:  ExtractPackagePath(val),
+		Alias: ExtractPackageName(val),
 	}
 }
 
+// ExtractPackageImport extracts both the package path and package name from a struct value.
+// Deprecated: Use ExtractImport instead.
+func ExtractPackageImport(val any) Import {
+	return ExtractImport(val)
+}
+
 // DeduplicateImports removes duplicate import entries and sorts them for consistent output.
-func DeduplicateImports(extraImports [][2]string) [][2]string {
-	seen := make(map[[2]string]bool)
-	result := make([][2]string, 0, len(extraImports))
+func DeduplicateImports(extraImports []Import) []Import {
+	seen := make(map[Import]bool)
+	result := make([]Import, 0, len(extraImports))
 	for _, item := range extraImports {
-		if item[0] == "" {
+		if item.Path == "" {
 			continue
 		}
 		if !seen[item] {
@@ -180,17 +192,17 @@ func DeduplicateImports(extraImports [][2]string) [][2]string {
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i][0] == result[j][0] {
-			return result[i][1] < result[j][1]
+		if result[i].Path == result[j].Path {
+			return result[i].Alias < result[j].Alias
 		}
-		return result[i][0] < result[j][0]
+		return result[i].Path < result[j].Path
 	})
 	for i, item := range result {
-		if item[1] == "" {
+		if item.Alias == "" {
 			continue
 		}
-		if pkgName := path.Base(item[0]); pkgName == item[1] {
-			result[i][1] = ""
+		if pkgName := path.Base(item.Path); pkgName == item.Alias {
+			result[i].Alias = ""
 		}
 	}
 	return result
