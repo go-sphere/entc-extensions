@@ -17,7 +17,5 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '>=1.24'
-    - name: Build
-      run: make init && make build
     - name: Test
       run: cd testdata && make init && make test
