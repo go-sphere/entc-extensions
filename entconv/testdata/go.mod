@@ -2,12 +2,12 @@ module github.com/go-sphere/protocgenentconv/testdata
 
 go 1.25.0
 
-replace github.com/go-sphere/entconv => ../
+replace github.com/go-sphere/entc-extensions/entconv => ../
 
 require (
 	entgo.io/contrib v0.7.0
 	entgo.io/ent v0.14.5
-	github.com/go-sphere/entconv v0.0.0
+	github.com/go-sphere/entc-extensions/entconv v0.0.0
 	google.golang.org/protobuf v1.36.5
 )
 

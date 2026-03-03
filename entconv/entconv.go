@@ -20,9 +20,10 @@ import (
 
 // Options holds all the configuration for code generation.
 type Options struct {
-	// ProtoGoFile is the path to the generated .pb.go file from protoc.
-	// Example: "./api/entpb/entpb.pb.go"
-	ProtoGoFile string
+
+	// IDType specifies the ID type for ent schema: int, int64, uint, uint64, string.
+	// Default is "int64".
+	IDType string
 
 	// EntSchema is the directory containing ent schema definitions.
 	// Example: "./internal/pkg/database/schema"
@@ -32,13 +33,9 @@ type Options struct {
 	// Example: "github.com/example/project/internal/pkg/database/ent"
 	EntImportPath string
 
-	// Output is the file path where the converter code will be written.
-	// Example: "./api/entpb/entpb_conv.go"
-	Output string
-
-	// IDType specifies the ID type for ent schema: int, int64, uint, uint64, string.
-	// Default is "int64".
-	IDType string
+	// ProtoGoFile is the path to the generated .pb.go file from protoc.
+	// Example: "./api/entpb/entpb.pb.go"
+	ProtoGoFile string
 
 	// ProtoPackage is the Go package name for the proto types (from .pb.go).
 	// Example: "entpb"
@@ -47,6 +44,10 @@ type Options struct {
 	// ProtoImportPath is the import path for the proto package.
 	// Example: "github.com/example/project/api/entpb"
 	ProtoImportPath string
+
+	// Output is the file path where the converter code will be written.
+	// Example: "./api/entpb/entpb_conv.go"
+	Output string
 }
 
 // RequiredOptionError is returned when a required option is missing.

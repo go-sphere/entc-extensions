@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/go-sphere/entconv"
+	"github.com/go-sphere/entc-extensions/entconv"
 )
 
 func main() {
 	opts := &entconv.Options{
-		ProtoGoFile:     "./api/entpb/entpb.pb.go",
+		IDType:          "int64",
 		EntSchema:       "./internal/pkg/database/schema",
 		EntImportPath:   "github.com/go-sphere/protocgenentconv/testdata/internal/pkg/database/ent",
+		ProtoGoFile:     "./api/entpb/entpb.pb.go",
 		ProtoPackage:    "entpb",
 		ProtoImportPath: "github.com/go-sphere/protocgenentconv/testdata/api/entpb",
-		IDType:          "int64",
 		Output:          "./api/entpb/entpb_entconv.go",
 	}
 

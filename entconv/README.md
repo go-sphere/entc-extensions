@@ -22,7 +22,7 @@ When building gRPC services with Ent ORM, you often need to convert between your
 ## Installation
 
 ```bash
-go get github.com/go-sphere/entconv
+go get github.com/go-sphere/entc-extensions/entconv
 ```
 
 ## Quick Start
@@ -81,7 +81,7 @@ package main
 
 import (
     "log"
-    "github.com/go-sphere/entconv"
+    "github.com/go-sphere/entc-extensions/entconv"
 )
 
 func main() {
