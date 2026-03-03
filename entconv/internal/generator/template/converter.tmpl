@@ -1,7 +1,7 @@
 {{- /*gotype: github.com/go-sphere/entc-extensions/entconv/internal/generator.Generator*/ -}}
 {{ $g := . }}
 {{ $entPackage := .EntPackage }}
-{{ $protoPackagePath := .ConvPackagePath }}
+{{ $protoPackagePath := .ProtoPackagePath }}
 {{ range $idx, $typeInfo := .Types }}
 {{ $fieldMap := getFieldMap $typeInfo.Type.Name }}
 

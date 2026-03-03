@@ -24,9 +24,9 @@ type Options struct {
 	// Example: "./internal/pkg/database/schema"
 	SchemaPath string
 
-	// EntPackage is the import path for the ent package.
+	// EntPackagePath is the import path for the ent package.
 	// Example: "github.com/example/project/internal/pkg/database/ent"
-	EntPackage string
+	EntPackagePath string
 
 	// IDType specifies the ID type for ent schema: int, int64, uint, uint64, string.
 	// Default is "int64".
@@ -40,27 +40,19 @@ type Options struct {
 	// Example: "converter"
 	ConvPackage string
 
-	// ConvPackagePath is the import path for the proto package.
+	// ProtoPackagePath is the import path for the proto package (e.g., entpb).
 	// Example: "github.com/example/project/api/entpb"
-	ConvPackagePath string
+	ProtoPackagePath string
 
 	// ProtoAlias is the alias used for the proto package in generated code.
 	// If not set, defaults to ProtoPackage value.
 	// Example: "pb"
 	ProtoAlias string
 
-	// Out is the file path where the converter code will be written (for single file mode).
-	// Example: "./internal/converter/conv.go"
-	Out string
-
-	// OutDir is the directory where converter files will be written (for multi-file mode).
-	// When set, each schema type generates a separate file named {type}.go.
+	// OutDir is the directory where converter files will be written.
+	// Each schema type generates a separate file named {type}.go.
 	// Example: "./internal/converter/"
 	OutDir string
-
-	// SingleFile generates a single file with all converters when true.
-	// When false (default), each schema type generates a separate file.
-	SingleFile bool
 }
 
 // RequiredOptionError is returned when a required option is missing.
@@ -79,7 +71,7 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 	}
 
 	// Resolve ent package path
-	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackage)
+	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackagePath)
 	if err != nil {
 		return nil, fmt.Errorf("resolving ent package: %w", err)
 	}
@@ -113,13 +105,13 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 	// Only use alias when ProtoPackagePath is set (separate package generation)
 	// When ProtoPackagePath is empty, assume same package (no prefix needed)
 	var protoAlias string
-	if opts.ConvPackagePath != "" {
+	if opts.ProtoPackagePath != "" {
 		protoAlias = opts.ProtoAlias
 		if protoAlias == "" {
 			protoAlias = opts.ConvPackage
 		}
 	}
-	cg := generator.New(entPkg, opts.ConvPackage, opts.ConvPackagePath, protoAlias, typesToGenerate, adapter, g)
+	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
 
 	// Generate to buffer first
 	var buf bytes.Buffer
@@ -134,7 +126,7 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 	}
 
 	// Run goimports to fix imports
-	imported, err := imports.Process(opts.Out, formatted, nil)
+	imported, err := imports.Process("", formatted, nil)
 	if err != nil {
 		return nil, fmt.Errorf("running goimports: %w", err)
 	}
@@ -163,32 +155,14 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) []g
 	return typesToGenerate
 }
 
-// GenerateConverterFile generates converter code and writes it to the output file(s).
-// When SingleFile is true or OutDir is not set, generates a single file to opts.Out.
-// When OutDir is set, generates separate files for each type.
+// GenerateConverterFile generates converter files to the output directory.
 func GenerateConverterFile(opts *Options) error {
-	// Determine output mode
-	useSingleFile := opts.SingleFile || opts.OutDir == ""
-
-	if useSingleFile {
-		// Single file mode
-		if opts.Out == "" {
-			return &RequiredOptionError{Field: "Out"}
-		}
-		source, err := GenerateConverter(opts)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(opts.Out, source, 0644)
-	}
-
-	// Multi-file mode: generate separate files for each type
 	if err := validateOptions(opts); err != nil {
 		return err
 	}
 
 	// Load ent graph
-	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackage)
+	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackagePath)
 	if err != nil {
 		return fmt.Errorf("resolving ent package: %w", err)
 	}
@@ -219,7 +193,7 @@ func GenerateConverterFile(opts *Options) error {
 
 	// Set up alias
 	var protoAlias string
-	if opts.ConvPackagePath != "" {
+	if opts.ProtoPackagePath != "" {
 		protoAlias = opts.ProtoAlias
 		if protoAlias == "" {
 			protoAlias = opts.ConvPackage
@@ -227,7 +201,7 @@ func GenerateConverterFile(opts *Options) error {
 	}
 
 	// Generate all files
-	cg := generator.New(entPkg, opts.ConvPackage, opts.ConvPackagePath, protoAlias, typesToGenerate, adapter, g)
+	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
 	return cg.GenerateAll(opts.OutDir)
 }
 
@@ -342,18 +316,18 @@ func validateOptions(opts *Options) error {
 	if opts.SchemaPath == "" {
 		return &RequiredOptionError{Field: "SchemaPath"}
 	}
-	if opts.EntPackage == "" {
+	if opts.EntPackagePath == "" {
 		return &RequiredOptionError{Field: "EntPackage"}
 	}
 	if opts.ConvPackage == "" {
 		return &RequiredOptionError{Field: "ProtoPackage"}
 	}
-	if opts.ConvPackagePath == "" {
+	if opts.ProtoPackagePath == "" {
 		return &RequiredOptionError{Field: "ProtoPackagePath"}
 	}
-	// Validate output: either Out or OutDir must be set
-	if opts.Out == "" && opts.OutDir == "" {
-		return &RequiredOptionError{Field: "Out"}
+	// Validate output directory
+	if opts.OutDir == "" {
+		return &RequiredOptionError{Field: "OutDir"}
 	}
 	return nil
 }

@@ -50,8 +50,8 @@ type TypeInfo struct {
 type Generator struct {
 	EntPackage   string
 	ConvPackage string
-	// ConvPackagePath is the import path for the proto package.
-	ConvPackagePath string
+	// ProtoPackagePath is the import path for the proto package.
+	ProtoPackagePath string
 	// ProtoAlias is the alias used for the proto package in generated code.
 	ProtoAlias string
 	Types      []TypeInfo
@@ -82,7 +82,7 @@ func New(entPackage, pkg, pkgPath, protoAlias string, types []TypeInfo, adapter 
 	return &Generator{
 		EntPackage:       entPackage,
 		ConvPackage:      pkg,
-		ConvPackagePath:  pkgPath,
+		ProtoPackagePath:  pkgPath,
 		ProtoAlias:       protoAlias,
 		Types:            types,
 		Adapter:          adapter,
@@ -167,7 +167,7 @@ func (g *Generator) generateSingleType(w io.Writer, typeInfo TypeInfo) error {
 	tempGen := &Generator{
 		EntPackage:      g.EntPackage,
 		ConvPackage:    g.ConvPackage,
-		ConvPackagePath: g.ConvPackagePath,
+		ProtoPackagePath: g.ProtoPackagePath,
 		ProtoAlias:       g.ProtoAlias,
 		Types:            []TypeInfo{typeInfo},
 		Adapter:          g.Adapter,
@@ -223,9 +223,9 @@ func (g *Generator) Imports() []string {
 	// Add ent import
 	imp = append(imp, fmt.Sprintf(`ent "%s"`, g.EntPackage))
 
-	// Add proto package import if ConvPackagePath is specified (for separate package generation)
-	if g.ConvPackagePath != "" && g.ProtoAlias != "" {
-		imp = append(imp, fmt.Sprintf(`%s "%s"`, g.ProtoAlias, g.ConvPackagePath))
+	// Add proto package import if ProtoPackagePath is specified (for separate package generation)
+	if g.ProtoPackagePath != "" && g.ProtoAlias != "" {
+		imp = append(imp, fmt.Sprintf(`%s "%s"`, g.ProtoAlias, g.ProtoPackagePath))
 	}
 
 	// Check if any type needs the post package (for enums)
