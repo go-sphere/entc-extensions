@@ -217,12 +217,7 @@ func (g *Generator) generateBody(w io.Writer) error {
 
 // Imports returns the list of imports needed by the generated code.
 func (g *Generator) Imports() []string {
-	imp := []string{
-		`runtime "github.com/go-sphere/entc-extensions/entproto/runtime"`,
-		`timestamppb "google.golang.org/protobuf/types/known/timestamppb"`,
-		`regexp "regexp"`,
-		`strings "strings"`,
-	}
+	imp := []string{}
 
 	// Add ent import
 	imp = append(imp, fmt.Sprintf(`ent "%s"`, g.EntPackage))

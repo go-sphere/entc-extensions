@@ -16,8 +16,6 @@
 {{ $omitPrefix := .EntField.Annotations.ProtoEnum.OmitFieldPrefix }}
 {{ $pbConstPrefix := printf "%s_" $typeInfo.Type.Name }}
 
-{{/* Generate static maps for enum conversion */}}
-{{ $omitPrefix := .EntField.Annotations.ProtoEnum.OmitFieldPrefix }}
 var (
     // toProto{{ $enumName }}Map maps Ent enum values to Protobuf enum values
     toProto{{ $enumName }}Map = map[{{ ident $entEnumIdent }}]{{ ident $pbEnumIdent }}{
