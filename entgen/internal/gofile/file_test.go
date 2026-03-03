@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-sphere/entc-extensions/entgen/inspect"
+	"github.com/go-sphere/entc-extensions/entgen/internal/inspect"
 )
 
 func TestFilenames_Next(t *testing.T) {

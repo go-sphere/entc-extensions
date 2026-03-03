@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-sphere/entc-extensions/entgen/inspect"
+	"github.com/go-sphere/entc-extensions/entgen/internal/inspect"
 	"golang.org/x/tools/imports"
 )
 

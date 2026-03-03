@@ -16,6 +16,8 @@ func main() {
 	schema := flag.String("schema", "./schema", "path to the schema directory")
 	target := flag.String("target", "./ent", "target directory for generated code")
 	flag.Parse()
+	options := autoproto.NewDefaultGraphOptions()
+	options.EnumUseRawType = false
 	err := entc.Generate(*schema, &gen.Config{
 		Target:  *target,
 		IDType:  &field.TypeInfo{Type: field.TypeInt64},
@@ -27,7 +29,7 @@ func main() {
 			gen.FeatureLock,
 		},
 	}, entc.Extensions(autoproto.NewAutoProtoExtension(&autoproto.ProtoOptions{
-		Graph:    autoproto.NewDefaultGraphOptions(),
+		Graph:    options,
 		ProtoDir: "./proto",
 	})))
 	if err != nil {

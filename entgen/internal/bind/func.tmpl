@@ -3,7 +3,29 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 	option := NewBindOptions(options...)
 {{- range .Fields}}
 	if option.CanSetField({{.FieldKeyPath}}) {
-		{{- if .TargetFieldIsPtr}}
+		{{- if .HasCustomConverter}}
+			{{- if .TargetFieldIsPtr}}
+				{{- if .CanSettNillable}}
+					if target.{{.TargetField.Name}} != nil {
+						source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(*target.{{.TargetField.Name}}))
+					} else {
+						source.{{.SettNillableFuncName}}(nil)
+					}
+				{{- else}}
+					if target.{{.TargetField.Name}} != nil {
+						source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(*target.{{.TargetField.Name}}))
+					}
+				{{- end}}
+			{{- else}}
+				{{- if .CanSettNillable}}
+					if option.CanSetZero({{.FieldKeyPath}}) || {{GenNotZeroCheck "target" .TargetField}} {
+						source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(target.{{.TargetField.Name}}))
+					}
+				{{- else}}
+					source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(target.{{.TargetField.Name}}))
+				{{- end}}
+			{{- end}}
+		{{- else if .TargetFieldIsPtr}}
 			{{- if .CanSettNillable}}
 				{{- if .CanClearOnNil}}
 					if target.{{.TargetField.Name}} == nil && option.ClearOnNil({{.FieldKeyPath}}) {

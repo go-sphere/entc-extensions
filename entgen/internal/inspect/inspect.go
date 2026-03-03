@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -45,6 +46,38 @@ func ExtractPackageName(val any) string {
 	}
 	parts := strings.Split(fullName, ".")
 	return parts[0]
+}
+
+// ExtractSubPackageName extracts the sub-package name from a struct value's type information.
+// For example, for ent.Example, it returns "example".
+func ExtractSubPackageName(val any) string {
+	value := IndirectValue(reflect.ValueOf(val))
+	typeOf := value.Type()
+	typeName := typeOf.Name()
+	// typeName examples:
+	// Example -> "example"
+	// EdgeItem -> "edgeitem"
+	return strings.ToLower(typeName)
+}
+
+// ExtractSubPackagePath extracts the full import path to the sub-package from a struct value's type information.
+// For example, for ent.Example, it returns "github.com/xxx/ent/example".
+func ExtractSubPackagePath(val any) string {
+	value := IndirectValue(reflect.ValueOf(val))
+	typeOf := value.Type()
+	fullName := typeOf.String()
+	// fullName examples:
+	// ent.Example -> "example"
+	// ent.EdgeItem -> "edgeitem"
+	// *ent.Example -> "example"
+	parts := strings.Split(fullName, ".")
+	if len(parts) >= 2 {
+		subPkg := strings.ToLower(parts[len(parts)-1])
+		pkgPath := typeOf.PkgPath()
+		// pkgPath is like "github.com/xxx/ent", we need to append the subpackage
+		return pkgPath + "/" + subPkg
+	}
+	return ""
 }
 
 // ExtractPublicFields extracts all public (exported) fields from a struct using reflection.
@@ -206,4 +239,64 @@ func DeduplicateImports(extraImports []Import) []Import {
 		}
 	}
 	return result
+}
+
+// FuncInfo holds metadata about a function that can be used for code generation.
+type FuncInfo struct {
+	ImportPath string // e.g., github.com/xxx/project/entconv
+	Package    string // e.g., entconv
+	Name       string // e.g., GenerateConverterFile / GenerateConverterFile.func1
+	FullName   string // runtime original name
+}
+
+// GetFuncInfo extracts function metadata from a function value.
+// It returns a FuncInfo struct containing the import path, package name,
+// function name, and full runtime name.
+func GetFuncInfo(fn any) FuncInfo {
+	v := reflect.ValueOf(fn)
+	if !v.IsValid() || v.Kind() != reflect.Func {
+		return FuncInfo{}
+	}
+
+	pc := v.Pointer()
+	rf := runtime.FuncForPC(pc)
+	if rf == nil {
+		return FuncInfo{}
+	}
+
+	full := rf.Name()
+	// full examples:
+	// github.com/xxx/project/entconv.GenerateConverterFile
+	// github.com/xxx/project/entconv.(*T).Method
+	// github.com/xxx/project/entconv.GenerateConverterFile.func1
+
+	// Find the boundary between "package path + package name" and "symbol name":
+	// That is: after the last "/", find the first "."
+	lastSlash := strings.LastIndex(full, "/")
+	searchFrom := 0
+	if lastSlash != -1 {
+		searchFrom = lastSlash + 1
+	}
+	firstDotAfterSlash := strings.Index(full[searchFrom:], ".")
+	if firstDotAfterSlash == -1 {
+		// Rare fallback: no dot, cannot split
+		return FuncInfo{FullName: full, Name: full}
+	}
+	firstDotAfterSlash += searchFrom
+
+	importPath := full[:firstDotAfterSlash] // up to end of package name (excluding dot)
+	symbol := full[firstDotAfterSlash+1:]   // everything after the dot: function name/method/closure
+
+	// Package name: after last "/" in importPath
+	pkg := importPath
+	if i := strings.LastIndex(importPath, "/"); i != -1 {
+		pkg = importPath[i+1:]
+	}
+
+	return FuncInfo{
+		ImportPath: importPath,
+		Package:    pkg,
+		Name:       symbol,
+		FullName:   full,
+	}
 }

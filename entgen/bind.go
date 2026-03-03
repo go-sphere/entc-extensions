@@ -5,36 +5,33 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-sphere/entc-extensions/entgen/bind"
 	"github.com/go-sphere/entc-extensions/entgen/conf"
-	"github.com/go-sphere/entc-extensions/entgen/gofile"
-	"github.com/go-sphere/entc-extensions/entgen/inspect"
-	"github.com/go-sphere/entc-extensions/entgen/strcase"
+	"github.com/go-sphere/entc-extensions/entgen/internal/bind"
+	"github.com/go-sphere/entc-extensions/entgen/internal/gofile"
+	"github.com/go-sphere/entc-extensions/entgen/internal/inspect"
+	"github.com/go-sphere/entc-extensions/entgen/internal/strcase"
 )
 
-// BindFiles generates Go files to map entities as per the provided configuration and writes them to the specified directory.
-// It supports options to clean the directory before generation and allows specifying additional imports and package names.
-// Returns an error if directory operations, file writing, or file generation fail.
-func BindFiles(conf *conf.FilesConf) error {
-	if err := gofile.CreateDir(conf.Dir, conf.RemoveBeforeGenerate); err != nil {
+// BindFiles generates Go files for binding entities.
+func BindFiles(c *conf.FilesConf) error {
+	if err := gofile.CreateDir(c.Dir, c.RemoveBeforeGenerate); err != nil {
 		return err
 	}
 
-	pkgName := conf.Package
+	pkgName := c.Package
 	if pkgName == "" {
 		pkgName = "bind"
 	}
 
-	filenames := gofile.NewFilenames(conf.Dir)
+	filenames := gofile.NewFilenames(c.Dir)
 	{
 		file := bind.CreateOptionsFile(pkgName)
-		err := gofile.WriteFile(filenames.Next("options"), []byte(file))
-		if err != nil {
+		if err := gofile.WriteFile(filenames.Next("options"), []byte(file)); err != nil {
 			return err
 		}
 	}
 
-	for _, item := range conf.Entities {
+	for _, item := range c.Entities {
 		if item.Source == nil || item.Target == nil {
 			return fmt.Errorf("bind entity must provide both Source and Target types")
 		}
@@ -42,27 +39,21 @@ func BindFiles(conf *conf.FilesConf) error {
 			continue
 		}
 		filename := filenames.Next(strcase.ToSnake(inspect.TypeName(item.Source)))
-		err := genBindFile(filename, pkgName, conf.ExtraImports, item)
-		if err != nil {
+		if err := genBindFile(filename, pkgName, c.ExtraImports, item); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func genBindFile(fileName string, pkgName string, pkgImports []inspect.Import, item *conf.EntityConf) error {
+func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *conf.EntityConf) error {
 	var body strings.Builder
 
-	pkgImports = append(pkgImports,
-		inspect.ExtractImport(item.Source),
-		inspect.ExtractImport(item.Target),
-	)
+	pkgImports := collectImports(item, extraImports)
 
 	for _, act := range item.Actions {
-		pkgImports = append(pkgImports,
-			inspect.ExtractImport(act),
-		)
-		funcContent, err := bind.GenBindFunc(act, item)
+		pkgImports = append(pkgImports, inspect.ExtractImport(act))
+		funcContent, err := bind.GenBindFunc(act, item, item.CustomFieldConverters)
 		if err != nil {
 			return err
 		}
@@ -71,9 +62,38 @@ func genBindFile(fileName string, pkgName string, pkgImports []inspect.Import, i
 	}
 
 	file := gofile.CreateGoFile(pkgName, pkgImports, body.String())
-	err := gofile.WriteFile(fileName, []byte(file))
-	if err != nil {
-		return err
+	return gofile.WriteFile(filename, []byte(file))
+}
+
+func collectImports(item *conf.EntityConf, extraImports []inspect.Import) []inspect.Import {
+	pkgImports := make([]inspect.Import, 0, len(extraImports)+4)
+
+	// Add target (protobuf) package import
+	pkgImports = append(pkgImports, inspect.ExtractImport(item.Target))
+
+	// Add sub-package import for field constants (e.g., example, edgeitem)
+	if subPkg := inspect.ExtractSubPackageName(item.Source); subPkg != "" {
+		pkgImports = append(pkgImports, inspect.Import{
+			Path:  inspect.ExtractSubPackagePath(item.Source),
+			Alias: subPkg,
+		})
 	}
-	return nil
+
+	// Extract imports from custom converters
+	if item.CustomFieldConverters != nil {
+		for _, converter := range item.CustomFieldConverters {
+			funcInfo := inspect.GetFuncInfo(converter)
+			if funcInfo.ImportPath != "" {
+				pkgImports = append(pkgImports, inspect.Import{
+					Path:  funcInfo.ImportPath,
+					Alias: funcInfo.Package,
+				})
+			}
+		}
+	}
+
+	// Add extra imports
+	pkgImports = append(pkgImports, extraImports...)
+
+	return pkgImports
 }

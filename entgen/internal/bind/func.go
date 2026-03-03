@@ -8,18 +8,15 @@ import (
 	"text/template"
 
 	"github.com/go-sphere/entc-extensions/entgen/conf"
-	"github.com/go-sphere/entc-extensions/entgen/inspect"
-	"github.com/go-sphere/entc-extensions/entgen/strcase"
+	"github.com/go-sphere/entc-extensions/entgen/internal/inspect"
+	"github.com/go-sphere/entc-extensions/entgen/internal/strcase"
 )
 
 //go:embed func.tmpl
 var genBindFuncTemplate string
 
-// GenBindFunc generates Go code for binding functions based on the provided configuration.
-// It creates functions that can convert between source and target types using reflection
-// to analyze field mappings and generate appropriate setter calls.
-// Returns the generated Go code as a string or an error if generation fails.
-func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
+// GenBindFunc generates Go code for binding functions.
+func GenBindFunc(action any, conf *conf.EntityConf, customConverters map[string]any) (string, error) {
 	actionName := inspect.TypeName(action)
 	sourceName := inspect.TypeName(conf.Source)
 	targetName := inspect.TypeName(conf.Target)
@@ -29,32 +26,22 @@ func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
 	_, targetFields := inspect.ExtractPublicFields(conf.Target, strcase.ToSnake)
 	_, actionMethods := inspect.ExtractPublicMethods(action, strcase.ToSnake)
 
-	context := bindContext{
-		SourcePkgName: conf.SourcePkgName,
-		TargetPkgName: conf.TargetPkgName,
-
-		ActionName: actionName,
-		SourceName: sourceName,
-		TargetName: targetName,
-		FuncName:   funcName,
-		Fields:     make([]fieldContext, 0),
-	}
-
 	ignoreFields := make(map[string]bool, len(conf.IgnoreFields))
 	for _, field := range conf.IgnoreFields {
 		ignoreFields[strings.ToLower(field)] = true
 	}
-	table := inspect.TypeName(conf.Source)
+	table := strings.ToLower(inspect.TypeName(conf.Source))
 
+	fields := make([]fieldContext, 0, len(keys))
 	for _, n := range keys {
 		if ignoreFields[n] {
 			continue
 		}
-		sourceField, ok := sourceFields[n] // ent.Example
+		sourceField, ok := sourceFields[n]
 		if !ok {
 			continue
 		}
-		targetField, ok := targetFields[n] // entpb.Example
+		targetField, ok := targetFields[n]
 		if !ok {
 			continue
 		}
@@ -63,12 +50,13 @@ func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
 		if !hasSetter {
 			continue
 		}
+
 		settNillable, hasSettNillable := actionMethods[strcase.ToSnake(fmt.Sprintf("SetNillable%s", sourceField.Name))]
 		clearOnNil, hasClearOnNil := actionMethods[strcase.ToSnake(fmt.Sprintf("Clear%s", sourceField.Name))]
 		targetFieldIsPtr := targetField.Type.Kind() == reflect.Pointer
 
 		field := fieldContext{
-			FieldKeyPath: fmt.Sprintf("%s.Field%s", strings.ToLower(table), sourceField.Name),
+			FieldKeyPath: fmt.Sprintf("%s.Field%s", table, sourceField.Name),
 
 			TargetField: targetField,
 			SourceField: sourceField,
@@ -89,7 +77,27 @@ func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
 		} else {
 			field.TargetSourceIsSomeType = targetField.Type.Kind() == sourceField.Type.Kind() && targetField.Type.String() == sourceField.Type.String()
 		}
-		context.Fields = append(context.Fields, field)
+
+		// Check for custom converter
+		if customConverters != nil {
+			if converter, ok := customConverters[n]; ok {
+				field.HasCustomConverter = true
+				field.CustomConverter = inspect.GetFuncInfo(converter)
+			}
+		}
+
+		fields = append(fields, field)
+	}
+
+	context := bindContext{
+		SourcePkgName: "ent",                                   // Source uses ent package (e.g., ent.ExampleCreate)
+		TargetPkgName: inspect.ExtractPackageName(conf.Target), // Target uses entpb package
+
+		ActionName: actionName,
+		SourceName: sourceName,
+		TargetName: targetName,
+		FuncName:   funcName,
+		Fields:     fields,
 	}
 
 	parse, err := template.New("bind").Funcs(template.FuncMap{
@@ -100,9 +108,9 @@ func GenBindFunc(action any, conf *conf.EntityConf) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	var builder strings.Builder
-	err = parse.Execute(&builder, context)
-	if err != nil {
+	if err := parse.Execute(&builder, context); err != nil {
 		return "", err
 	}
 	return builder.String(), nil
@@ -116,8 +124,7 @@ type bindContext struct {
 	SourceName string
 	TargetName string
 	FuncName   string
-
-	Fields []fieldContext
+	Fields     []fieldContext
 }
 
 type fieldContext struct {
@@ -135,4 +142,7 @@ type fieldContext struct {
 
 	TargetFieldIsPtr       bool
 	TargetSourceIsSomeType bool
+
+	HasCustomConverter bool
+	CustomConverter    inspect.FuncInfo
 }
