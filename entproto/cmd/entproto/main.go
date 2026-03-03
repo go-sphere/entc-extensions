@@ -5,9 +5,9 @@ import (
 	"log"
 	"path/filepath"
 
-	"entgo.io/contrib/entproto"
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
+	"github.com/go-sphere/entc-extensions/entproto"
 )
 
 func main() {

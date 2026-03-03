@@ -5,9 +5,9 @@ import (
 
 	"github.com/go-sphere/entc-extensions/entgen"
 	"github.com/go-sphere/entc-extensions/entgen/conf"
-	"github.com/go-sphere/entc-extensions/example/entgen/api/entpb"
-	"github.com/go-sphere/entc-extensions/example/entgen/ent"
-	"github.com/go-sphere/entc-extensions/example/entgen/ent/example"
+	"github.com/go-sphere/entc-extensions/entgen/testdata/api/entpb"
+	"github.com/go-sphere/entc-extensions/entgen/testdata/ent"
+	"github.com/go-sphere/entc-extensions/entgen/testdata/ent/example"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module entgo.io/contrib/entproto
+module github.com/go-sphere/entc-extensions/entproto
 
 go 1.25.7
 
