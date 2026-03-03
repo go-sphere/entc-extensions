@@ -26,7 +26,7 @@ type BinaryMarshallerUnmarshaler interface {
 // Converter holds conversion information for a single field.
 type Converter struct {
 	ToEntConversion              string
-	ToEntConversionArg          string // Additional argument for conversion (e.g., nanoseconds for time.Unix)
+	ToEntConversionArg           string // Additional argument for conversion (e.g., nanoseconds for time.Unix)
 	ToEntScannerConversion       string
 	ToEntConstructor             string
 	ToEntMarshallerConstructor   string
@@ -40,7 +40,7 @@ type Converter struct {
 }
 
 // NewConverter creates a Converter for the given field mapping and type name.
-func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string, entType *gen.Type) (*Converter, error) {
+func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Converter, error) {
 	out := &Converter{}
 	pbd := fld.PbFieldDescriptor
 	switch pbd.GetType() {
@@ -60,12 +60,6 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string, entType
 		switch {
 		case fld.IsEdgeField:
 			if err := basicTypeConversion(fld.EdgeIDPbStructFieldDesc(), fld.EntEdge.Type.ID, out); err != nil {
-				return nil, err
-			}
-		case pbd.GetMessageType().GetFullyQualifiedName() == "google.protobuf.Timestamp":
-			out.ToProtoConstructor = "timestamppb.New"
-		case isWrapperType(pbd.GetMessageType()):
-			if err := convertWrapperType(pbd.GetMessageType(), fld.EntField, out); err != nil {
 				return nil, err
 			}
 		default:
@@ -114,19 +108,10 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string, entType
 	case efld.Type.Numeric():
 		out.ToEntConversion = efld.Type.String()
 	case efld.IsTime():
-		// Check if the protobuf field is a Timestamp message type
-		if pbd.GetType() == dpb.FieldDescriptorProto_TYPE_MESSAGE &&
-			pbd.GetMessageType().GetFullyQualifiedName() == "google.protobuf.Timestamp" {
-			out.ToEntConstructor = "runtime.ExtractTime"
-			out.ToProtoConstructor = "timestamppb.New"
-		} else if pbd.GetType() == dpb.FieldDescriptorProto_TYPE_INT64 {
-			// For int64 (unix timestamp), use Unix() method
-			out.ToProtoConversion = "Unix"
-			out.ToProtoConversionModifier = ".Unix()" // Postfix to apply to the variable
-			out.ToEntConversion = "time.Unix"
-			out.ToEntConversionArg = "0" // nanoseconds
-		}
-		// If protobuf is neither Timestamp message nor int64, leave as is (no conversion)
+		out.ToProtoConversion = "int64"
+		out.ToProtoConversionModifier = ".Unix()"
+		out.ToEntConversion = "time.Unix"
+		out.ToEntConversionArg = "0"
 	case efld.IsEnum():
 		enumName := fld.PbFieldDescriptor.GetEnumType().GetName()
 		method := fmt.Sprintf("ToEnt%s_%s", typeName, enumName)
@@ -193,40 +178,6 @@ func basicTypeConversion(md *desc.FieldDescriptor, entField *gen.Field, conv *Co
 		}
 	}
 	return nil
-}
-
-// convertWrapperType handles google.protobuf wrapper types (StringValue, Int64Value, etc.)
-func convertWrapperType(md *desc.MessageDescriptor, entField *gen.Field, conv *Converter) error {
-	fqn := md.GetFullyQualifiedName()
-	typ := strings.Split(fqn, ".")[2]
-	constructor := strings.TrimSuffix(typ, "Value")
-	conv.ToProtoConstructor = "wrapperspb." + constructor
-
-	goType := wrapperPrimitives[fqn]
-	if entField.Type.Valuer() {
-		conv.ToProtoValuer = goType
-	} else if entField.Type.String() != goType {
-		conv.ToProtoConversion = goType
-	}
-	conv.ToEntModifier = ".GetValue()"
-	return nil
-}
-
-func isWrapperType(md *desc.MessageDescriptor) bool {
-	_, ok := wrapperPrimitives[md.GetFullyQualifiedName()]
-	return ok
-}
-
-var wrapperPrimitives = map[string]string{
-	"google.protobuf.DoubleValue": "float64",
-	"google.protobuf.FloatValue":  "float32",
-	"google.protobuf.Int64Value":  "int64",
-	"google.protobuf.UInt64Value": "uint64",
-	"google.protobuf.Int32Value":  "int32",
-	"google.protobuf.UInt32Value": "uint32",
-	"google.protobuf.BoolValue":   "bool",
-	"google.protobuf.StringValue": "string",
-	"google.protobuf.BytesValue":  "[]byte",
 }
 
 func implements(r *field.RType, typ reflect.Type) bool {

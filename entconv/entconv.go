@@ -18,44 +18,17 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-// Options holds all the configuration for code generation.
 type Options struct {
-	// SchemaPath is the directory containing ent schema definitions.
-	// Example: "./internal/pkg/database/schema"
-	SchemaPath string
-
-	// EntPackagePath is the import path for the ent package.
-	// Example: "github.com/example/project/internal/pkg/database/ent"
-	EntPackagePath string
-
-	// IDType specifies the ID type for ent schema: int, int64, uint, uint64, string.
-	// Default is "int64".
-	IDType string
-
-	// ProtoFile is the path to the generated .pb.go file from protoc.
-	// Example: "./api/entpb/entpb.pb.go"
-	ProtoFile string
-
-	// ConvPackage is the Go package name for the generated converter code.
-	// Example: "converter"
-	ConvPackage string
-
-	// ProtoPackagePath is the import path for the proto package (e.g., entpb).
-	// Example: "github.com/example/project/api/entpb"
+	SchemaPath       string
+	EntPackagePath   string
+	IDType           string
+	ProtoFile        string
+	ConvPackage      string
 	ProtoPackagePath string
-
-	// ProtoAlias is the alias used for the proto package in generated code.
-	// If not set, defaults to ProtoPackage value.
-	// Example: "pb"
-	ProtoAlias string
-
-	// OutDir is the directory where converter files will be written.
-	// Each schema type generates a separate file named {type}.go.
-	// Example: "./internal/converter/"
-	OutDir string
+	ProtoAlias       string
+	OutDir           string
 }
 
-// RequiredOptionError is returned when a required option is missing.
 type RequiredOptionError struct {
 	Field string
 }
@@ -64,46 +37,37 @@ func (e *RequiredOptionError) Error() string {
 	return fmt.Sprintf("required option %q is empty", e.Field)
 }
 
-// GenerateConverter generates ent <-> proto converter code and returns the formatted Go source.
 func GenerateConverter(opts *Options) ([]byte, error) {
 	if err := validateOptions(opts); err != nil {
 		return nil, err
 	}
 
-	// Resolve ent package path
 	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackagePath)
 	if err != nil {
 		return nil, fmt.Errorf("resolving ent package: %w", err)
 	}
 
-	// Parse and load ent graph
 	idType := parseIDType(opts.IDType)
 	g, err := loadEntGraph(opts.SchemaPath, entPkg, idType)
 	if err != nil {
 		return nil, fmt.Errorf("loading ent graph: %w", err)
 	}
 
-	// Parse proto Go file to get message types
 	protoTypes, err := parseProtoFile(opts.ProtoFile)
 	if err != nil {
 		return nil, fmt.Errorf("parsing proto file: %w", err)
 	}
 
-	// Auto-discover types from ent graph that match proto messages
 	typesToGenerate := matchTypes(g, protoTypes)
 	if len(typesToGenerate) == 0 {
 		return nil, fmt.Errorf("no matching types found between ent schema and proto messages")
 	}
 
-	// Load entproto adapter
 	adapter, err := loadAdapter(g)
 	if err != nil {
 		return nil, fmt.Errorf("loading adapter: %w", err)
 	}
 
-	// Generate code
-	// Only use alias when ProtoPackagePath is set (separate package generation)
-	// When ProtoPackagePath is empty, assume same package (no prefix needed)
 	var protoAlias string
 	if opts.ProtoPackagePath != "" {
 		protoAlias = opts.ProtoAlias
@@ -113,19 +77,16 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 	}
 	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
 
-	// Generate to buffer first
 	var buf bytes.Buffer
 	if err := cg.GenerateToWriter(&buf); err != nil {
 		return nil, fmt.Errorf("generating code: %w", err)
 	}
 
-	// Format the generated code
 	formatted, err := format.Source(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("formatting source: %w", err)
 	}
 
-	// Run goimports to fix imports
 	imported, err := imports.Process("", formatted, nil)
 	if err != nil {
 		return nil, fmt.Errorf("running goimports: %w", err)
@@ -134,7 +95,60 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 	return imported, nil
 }
 
-// matchTypes matches ent types with proto messages and returns TypeInfo for matching pairs.
+func GenerateConverterFile(opts *Options) error {
+	if err := validateOptions(opts); err != nil {
+		return err
+	}
+
+	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackagePath)
+	if err != nil {
+		return fmt.Errorf("resolving ent package: %w", err)
+	}
+
+	idType := parseIDType(opts.IDType)
+	g, err := loadEntGraph(opts.SchemaPath, entPkg, idType)
+	if err != nil {
+		return fmt.Errorf("loading ent graph: %w", err)
+	}
+
+	protoTypes, err := parseProtoFile(opts.ProtoFile)
+	if err != nil {
+		return fmt.Errorf("parsing proto file: %w", err)
+	}
+
+	typesToGenerate := matchTypes(g, protoTypes)
+	if len(typesToGenerate) == 0 {
+		return fmt.Errorf("no matching types found between ent schema and proto messages")
+	}
+
+	adapter, err := loadAdapter(g)
+	if err != nil {
+		return fmt.Errorf("loading adapter: %w", err)
+	}
+
+	var protoAlias string
+	if opts.ProtoPackagePath != "" {
+		protoAlias = opts.ProtoAlias
+		if protoAlias == "" {
+			protoAlias = opts.ConvPackage
+		}
+	}
+
+	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
+	return cg.GenerateAll(opts.OutDir)
+}
+
+func loadEntGraph(schemaPath, entPackage string, idType *field.TypeInfo) (*gen.Graph, error) {
+	return entc.LoadGraph(schemaPath, &gen.Config{
+		Package: entPackage,
+		IDType:  idType,
+	})
+}
+
+func loadAdapter(g *gen.Graph) (*entproto.Adapter, error) {
+	return entproto.LoadAdapter(g)
+}
+
 func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) []generator.TypeInfo {
 	var typesToGenerate []generator.TypeInfo
 
@@ -155,70 +169,6 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) []g
 	return typesToGenerate
 }
 
-// GenerateConverterFile generates converter files to the output directory.
-func GenerateConverterFile(opts *Options) error {
-	if err := validateOptions(opts); err != nil {
-		return err
-	}
-
-	// Load ent graph
-	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackagePath)
-	if err != nil {
-		return fmt.Errorf("resolving ent package: %w", err)
-	}
-
-	idType := parseIDType(opts.IDType)
-	g, err := loadEntGraph(opts.SchemaPath, entPkg, idType)
-	if err != nil {
-		return fmt.Errorf("loading ent graph: %w", err)
-	}
-
-	// Parse proto file
-	protoTypes, err := parseProtoFile(opts.ProtoFile)
-	if err != nil {
-		return fmt.Errorf("parsing proto file: %w", err)
-	}
-
-	// Match types
-	typesToGenerate := matchTypes(g, protoTypes)
-	if len(typesToGenerate) == 0 {
-		return fmt.Errorf("no matching types found between ent schema and proto messages")
-	}
-
-	// Load adapter
-	adapter, err := loadAdapter(g)
-	if err != nil {
-		return fmt.Errorf("loading adapter: %w", err)
-	}
-
-	// Set up alias
-	var protoAlias string
-	if opts.ProtoPackagePath != "" {
-		protoAlias = opts.ProtoAlias
-		if protoAlias == "" {
-			protoAlias = opts.ConvPackage
-		}
-	}
-
-	// Generate all files
-	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
-	return cg.GenerateAll(opts.OutDir)
-}
-
-// loadEntGraph loads the ent graph from the schema directory.
-func loadEntGraph(schemaPath, entPackage string, idType *field.TypeInfo) (*gen.Graph, error) {
-	return entc.LoadGraph(schemaPath, &gen.Config{
-		Package: entPackage,
-		IDType:  idType,
-	})
-}
-
-// loadAdapter loads the entproto adapter for the given graph.
-func loadAdapter(g *gen.Graph) (*entproto.Adapter, error) {
-	return entproto.LoadAdapter(g)
-}
-
-// parseProtoFile parses a generated .pb.go file and returns a map of message name to field info.
 func parseProtoFile(filePath string) (map[string]*generator.ProtoMessage, error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, filePath, nil, 0)
@@ -266,7 +216,6 @@ func parseStructFields(st *ast.StructType) []generator.ProtoField {
 	return fields
 }
 
-// getTypeName extracts the type name from an AST expression.
 func getTypeName(expr ast.Expr) string {
 	switch t := expr.(type) {
 	case *ast.Ident:
@@ -288,13 +237,11 @@ func getTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// parseIDType parses the ID type string into a field.TypeInfo.
-// Returns TypeInt64 as default if idType is empty or unrecognized.
 func parseIDType(idType string) *field.TypeInfo {
 	switch idType {
 	case "int":
 		return &field.TypeInfo{Type: field.TypeInt}
-	case "", "int64": // default
+	case "", "int64":
 		return &field.TypeInfo{Type: field.TypeInt64}
 	case "uint":
 		return &field.TypeInfo{Type: field.TypeUint}
@@ -303,12 +250,10 @@ func parseIDType(idType string) *field.TypeInfo {
 	case "string":
 		return &field.TypeInfo{Type: field.TypeString}
 	default:
-		// Return default for unrecognized types
 		return &field.TypeInfo{Type: field.TypeInt64}
 	}
 }
 
-// validateOptions validates that all required options are provided.
 func validateOptions(opts *Options) error {
 	if opts.ProtoFile == "" {
 		return &RequiredOptionError{Field: "ProtoFile"}
@@ -325,7 +270,6 @@ func validateOptions(opts *Options) error {
 	if opts.ProtoPackagePath == "" {
 		return &RequiredOptionError{Field: "ProtoPackagePath"}
 	}
-	// Validate output directory
 	if opts.OutDir == "" {
 		return &RequiredOptionError{Field: "OutDir"}
 	}

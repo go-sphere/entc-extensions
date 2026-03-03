@@ -268,6 +268,10 @@ func (g *Generator) writeImports(w io.Writer) error {
 	return nil
 }
 
+func (g *Generator) FieldMap(typeName string) (entproto.FieldMap, error) {
+	return g.Adapter.FieldMap(typeName)
+}
+
 func (g *Generator) templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		"ident":               g.ident,
@@ -290,7 +294,6 @@ func (g *Generator) templateFuncs() template.FuncMap {
 	}
 }
 
-// pascal converts a string to PascalCase.
 func (g *Generator) pascal(s string) string {
 	if s == "" {
 		return s
@@ -298,78 +301,55 @@ func (g *Generator) pascal(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// ident returns a qualified identifier (accepts full qualified path like "pkg.Name").
 func (g *Generator) ident(qualifiedIdent string) string {
 	return qualifiedIdent
 }
 
-// qualify returns a qualified identifier for the given package and identifier.
 func (g *Generator) qualify(pkg, ident string) string {
 	return pkg + "." + ident
 }
 
-// statusErr creates a gRPC status error.
 func (g *Generator) statusErr(code, msg string) string {
 	return fmt.Sprintf("status.Error(codes.%s, %q)", code, msg)
 }
 
-// statusErrf creates a formatted gRPC status error.
 func (g *Generator) statusErrf(code, format string, args ...string) string {
 	return fmt.Sprintf("status.Errorf(codes.%s, %s, %s)", code, strconv.Quote(format), strings.Join(args, ","))
 }
 
-// getFieldMap returns the FieldMap for a given type name.
 func (g *Generator) getFieldMap(typeName string) (entproto.FieldMap, error) {
 	return g.Adapter.FieldMap(typeName)
 }
 
-// entIdent returns a qualified identifier for the ent package (using import alias).
 func (g *Generator) entIdent(subpath string, ident string) string {
 	if subpath == "" {
 		return "ent." + ident
 	}
-	// For subpackages like "post", use the package name as alias
 	pkgName := path.Base(subpath)
 	return pkgName + "." + ident
 }
 
-// protoIdent returns a qualified identifier for the proto package (using import alias).
 func (g *Generator) protoIdent(ident string) string {
-	// If ProtoAlias is specified, use it for separate package generation
 	if g.ProtoAlias != "" {
 		return g.ProtoAlias + "." + ident
 	}
-	// Otherwise, use bare identifier (same package)
 	return ident
 }
 
-// entPackageIdent returns a qualified identifier for the ent type (using import alias).
 func (g *Generator) entPackageIdent(typeName string) string {
 	return "ent." + typeName
 }
 
-// entEnumPkg returns the full import path for the enum's package based on schema type.
-// Uses O(1) map lookup instead of linear search.
 func (g *Generator) entEnumPkg(typeName string) (string, error) {
-	// O(1) lookup using the index
 	if _, ok := g.nodeIndex[typeName]; ok {
 		return path.Join(g.EntPackage, strings.ToLower(typeName)), nil
 	}
-
-	// Default to main package if not found in graph
 	return g.EntPackage, nil
 }
 
-// newConverter creates a Converter for the given field mapping and type name.
 func (g *Generator) newConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*converter.Converter, error) {
-	typeInfo, ok := g.typeIndex[typeName]
-	if !ok {
+	if _, ok := g.typeIndex[typeName]; !ok {
 		return nil, fmt.Errorf("type %q not found", typeName)
 	}
-	return converter.NewConverter(fld, typeName, typeInfo.Type)
-}
-
-// FieldMap returns the FieldMap for a given type name.
-func (g *Generator) FieldMap(typeName string) (entproto.FieldMap, error) {
-	return g.Adapter.FieldMap(typeName)
+	return converter.NewConverter(fld, typeName)
 }
