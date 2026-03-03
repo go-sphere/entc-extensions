@@ -1,0 +1,100 @@
+{{- /*gotype: github.com/go-sphere/protoc-gen-entconv/internal/generator.Generator*/ -}}
+{{ $g := . }}
+{{ $entPackage := .EntPackage }}
+{{ $goImportPath := .GoImportPath }}
+{{ range $idx, $typeInfo := .Types }}
+{{ $fieldMap := getFieldMap $typeInfo.Type.Name }}
+
+{{/* Generate enums for each type */}}
+{{ range $fieldMap.Enums }}
+{{ $enumType := .PbFieldDescriptor.GetEnumType }}
+{{ $enumName := printf "%s_%s" $typeInfo.Type.Name $enumType.GetName }}
+{{ $pbEnumIdent := protoIdent $enumName }}
+{{ $entLcase := camel $typeInfo.Type.Name }}
+{{ $entEnumIdent := entIdent $entLcase .PbStructField }}
+{{ $enumFieldPrefix := printf "%s_" (upper (snake $enumType.GetName)) }}
+{{ $omitPrefix := .EntField.Annotations.ProtoEnum.OmitFieldPrefix }}
+{{ $pbConstPrefix := printf "%s_" $typeInfo.Type.Name }}
+
+{{/* Generate static maps for enum conversion */}}
+var (
+    // toProto{{ $enumName }}Map maps Ent enum values to Protobuf enum values
+    toProto{{ $enumName }}Map = map[{{ ident $entEnumIdent }}]{{ ident $pbEnumIdent }}{
+    {{- range .EntField.Enums }}
+        {{ ident $entEnumIdent }}{{ camel .Value | pascal }}: {{ $pbConstPrefix }}{{ if not $omitPrefix }}{{ $enumFieldPrefix }}{{ end }}{{ protoIdentNormalize .Value }},
+    {{- end }}
+    }
+    
+    // toEnt{{ $enumName }}Map maps Protobuf enum values to Ent enum values
+    toEnt{{ $enumName }}Map = map[{{ ident $pbEnumIdent }}]{{ ident $entEnumIdent }}{
+    {{- range .EntField.Enums }}
+        {{ $pbConstPrefix }}{{ if not $omitPrefix }}{{ $enumFieldPrefix }}{{ end }}{{ protoIdentNormalize .Value }}: {{ ident $entEnumIdent }}{{ camel .Value | pascal }},
+    {{- end }}
+    }
+)
+
+func ToProto{{ $enumName }}(e {{ ident $entEnumIdent }}) {{ ident $pbEnumIdent }} {
+    if v, ok := toProto{{ $enumName }}Map[e]; ok {
+        return v
+    }
+    return {{ ident $pbEnumIdent }}(0)
+}
+
+func ToEnt{{ $enumName }}(e {{ ident $pbEnumIdent }}) {{ ident $entEnumIdent }} {
+    if v, ok := toEnt{{ $enumName }}Map[e]; ok {
+        return v
+    }
+    return ""
+}
+{{- end }}
+
+func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name }}) (*{{ $typeInfo.Type.Name }}, error) {
+    if e == nil {
+        return nil, nil
+    }
+    v := &{{ $typeInfo.Type.Name }}{}
+    {{- range $fieldMap.Fields }}
+    {{- $varName := .EntField.BuilderField }}
+    {{- $f := printf "e.%s" .EntField.StructField }}
+    {{- if .EntField.Nillable }}
+    if {{ $f }} != nil {
+        {{- $f = printf "*%s" $f }}
+    {{- end }}
+    {{- $conv := newConverter . $typeInfo.Type.Name }}
+    {{- if $conv.ToProtoConversion }}
+    {{- $f = printf "%s(%s)" $conv.ToProtoConversion $f }}
+    {{- end }}
+    {{- if $conv.ToProtoConstructor }}
+    {{ $varName }} := {{ ident $conv.ToProtoConstructor }}({{ $f }})
+    {{- else }}
+    {{ $varName }} := {{ $f }}
+    {{- end }}
+    v.{{ .PbStructField }} = {{ $varName }}
+    {{- if .EntField.Nillable }}
+    }
+    {{- end }}
+    {{- end }}
+    return v, nil
+}
+
+// ToEnt{{ $typeInfo.Type.Name }} converts a pb type to the ent type
+func ToEnt{{ $typeInfo.Type.Name }}(v *{{ $typeInfo.Type.Name }}) (*{{ entPackageIdent $typeInfo.Type.Name }}, error) {
+    if v == nil {
+        return nil, nil
+    }
+    e := &{{ entPackageIdent $typeInfo.Type.Name }}{}
+    {{- range $fieldMap.Fields }}
+    {{- $fieldName := .EntField.StructField }}
+    {{- $pbField := .PbStructField }}
+    {{- $conv := newConverter . $typeInfo.Type.Name }}
+    {{- if $conv.ToEntConstructor }}
+    e.{{ $fieldName }} = {{ ident $conv.ToEntConstructor }}(v.{{ $pbField }})
+    {{- else if $conv.ToEntConversion }}
+    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}(v.{{ $pbField }})
+    {{- else }}
+    e.{{ $fieldName }} = v.{{ $pbField }}
+    {{- end }}
+    {{- end }}
+    return e, nil
+}
+{{ end }}
