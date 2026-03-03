@@ -6,6 +6,7 @@ This is a fork of [ent/contrib/entproto](https://github.com/ent/contrib/tree/mas
 - Removed `protoc-gen-entgrpc` (gRPC service implementation generator)
 - Removed `protoc-gen-ent` (proto to ent generator)
 - Added native proto3 `optional` support
+- **Added automatic annotation generation** - schemas and fields automatically get `entproto` annotations with `WithAutoFill()` option
 
 **Disclaimer**: This is an experimental feature, expect the API to change in the near future.
 
@@ -22,7 +23,44 @@ Download the module:
 go get github.com/go-sphere/entc-extensions/entproto
 ```
 
-Annotate the schema with `entproto.Message()` and all fields with the desired proto field numbers (notice the field number 1 is reserved for the schema's `ID` field):
+### Option 1: Auto-generate Annotations (Recommended)
+
+This fork supports automatic annotation of schemas. Enable it with the `WithAutoFill()` option:
+
+```go
+package main
+
+import (
+	"log"
+
+	"entgo.io/ent/entc"
+	"entgo.io/ent/entc/gen"
+	"github.com/go-sphere/entc-extensions/entproto"
+)
+
+func main() {
+	err := entc.Generate("./schema", &gen.Config{
+		Target: "./ent",
+	}, entc.Extensions(
+		entproto.NewExtension(
+			entproto.WithProtoDir("./proto"),
+			entproto.WithAutoFill(), // Enable automatic annotation generation
+		),
+	))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+**How `WithAutoFill()` works:**
+- Schemas without `entproto.Message()` annotation automatically get one
+- Fields/edges without `proto.Field()` annotation are assigned auto-generated field numbers (ID field uses 1, others start from 2)
+- No need to manually annotate every schema and field
+
+### Option 2: Manual Annotations
+
+If you prefer manual control, annotate schemas explicitly:
 
 ```go
 package schema
