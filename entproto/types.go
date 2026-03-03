@@ -7,11 +7,11 @@ import (
 )
 
 var typeMap = map[field.Type]typeConfig{
-	field.TypeBool:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_BOOL},
-	field.TypeTime:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_INT64},
-	field.TypeOther:  {unsupported: true},
-	field.TypeUUID:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_BYTES},
-	field.TypeBytes:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_BYTES},
+	field.TypeBool:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_BOOL},
+	field.TypeTime:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_INT64},
+	field.TypeOther: {unsupported: true},
+	field.TypeUUID:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_BYTES},
+	field.TypeBytes: {pbType: descriptorpb.FieldDescriptorProto_TYPE_BYTES},
 	field.TypeEnum: {pbType: descriptorpb.FieldDescriptorProto_TYPE_ENUM, namer: func(fld *gen.Field) string {
 		return pascal(fld.Name)
 	}},

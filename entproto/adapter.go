@@ -10,8 +10,8 @@ import (
 
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
-	"github.com/jhump/protoreflect/desc"
-	"github.com/jhump/protoreflect/desc/builder"
+	"github.com/jhump/protoreflect/desc"         //nolint:staticcheck
+	"github.com/jhump/protoreflect/desc/builder" //nolint:staticcheck
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -23,8 +23,6 @@ const (
 var (
 	ErrSchemaSkipped   = errors.New("entproto: schema not annotated with Generate=true")
 	repeatedFieldLabel = descriptorpb.FieldDescriptorProto_LABEL_REPEATED
-	wktsPaths          = map[string]string{
-	}
 )
 
 // LoadAdapter takes a *gen.Graph and parses it into protobuf file descriptors
@@ -95,7 +93,7 @@ func (a *Adapter) parse() error {
 			protoPackages[protoPkg] = &descriptorpb.FileDescriptorProto{
 				Name:    relFileName(protoPkg),
 				Package: &protoPkg,
-				Syntax:  strptr("proto3"),
+				Syntax:  toPtr("proto3"),
 				Options: &descriptorpb.FileOptions{
 					GoPackage: &goPkg,
 				},
@@ -111,15 +109,6 @@ func (a *Adapter) parse() error {
 			continue
 		}
 		fd.Dependency = append(fd.Dependency, depPaths...)
-	}
-
-	// Append the well known types to the context.
-	for _, wktPath := range wktsPaths {
-		typeDesc, err := desc.LoadFileDescriptor(wktPath)
-		if err != nil {
-			return err
-		}
-		dpbDescriptors = append(dpbDescriptors, typeDesc.AsFileDescriptorProto())
 	}
 
 	for _, fd := range protoPackages {
@@ -140,11 +129,6 @@ func (a *Adapter) parse() error {
 	descriptors, err := desc.CreateFileDescriptors(dpbDescriptors)
 	if err != nil {
 		return err
-	}
-
-	// cleanup the WKT protos from the map
-	for _, wp := range wktsPaths {
-		delete(descriptors, wp)
 	}
 
 	for dp, fd := range descriptors {
@@ -169,7 +153,7 @@ func (a *Adapter) parse() error {
 
 func (a *Adapter) goPackageName(protoPkgName string) string {
 	// TODO(rotemtam): make this configurable from an annotation
-	entBase := a.graph.Config.Package
+	entBase := a.graph.Package
 	slashed := strings.ReplaceAll(protoPkgName, ".", "/")
 	return path.Join(entBase, "proto", slashed)
 }
@@ -218,46 +202,29 @@ func (a *Adapter) extractDepPaths(m *descriptorpb.DescriptorProto) ([]string, er
 	for _, fld := range m.Field {
 		if *fld.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE { //nolint
 			fieldTypeName := *fld.TypeName
-			if wp, ok := wktsPaths[fieldTypeName]; ok { //nolint
-				out = append(out, wp)
-			} else {
-				// Check if the field type is a dependency in the graph
-				parts := strings.Split(fieldTypeName, ".")
-				name := parts[len(parts)-1]
-				depType, err := extractGenTypeByName(a.graph, name)
-				if err != nil {
-					return nil, fmt.Errorf("entproto: failed extracting deps, unknown path for %s", fieldTypeName)
-				}
-				depPackageName, err := protoPackageName(depType)
-				if err != nil {
-					return nil, err
-				}
-				selfType, err := extractGenTypeByName(a.graph, *m.Name)
-				if err != nil {
-					return nil, err
-				}
-				selfPackageName, _ := protoPackageName(selfType)
-				if depPackageName != selfPackageName {
-					importPath := relFileName(depPackageName)
-					out = append(out, *importPath)
-				}
+			// Check if the field type is a dependency in the graph
+			parts := strings.Split(fieldTypeName, ".")
+			name := parts[len(parts)-1]
+			depType, err := extractGenTypeByName(a.graph, name)
+			if err != nil {
+				return nil, fmt.Errorf("entproto: failed extracting deps, unknown path for %s", fieldTypeName)
+			}
+			depPackageName, err := protoPackageName(depType)
+			if err != nil {
+				return nil, err
+			}
+			selfType, err := extractGenTypeByName(a.graph, *m.Name)
+			if err != nil {
+				return nil, err
+			}
+			selfPackageName, _ := protoPackageName(selfType)
+			if depPackageName != selfPackageName {
+				importPath := relFileName(depPackageName)
+				out = append(out, *importPath)
 			}
 		}
 	}
 	return out, nil
-}
-
-func extractLastFqnPart(fqn string) string {
-	parts := strings.Split(fqn, ".")
-	return parts[len(parts)-1]
-}
-
-type unsupportedTypeError struct {
-	Type *field.TypeInfo
-}
-
-func (e unsupportedTypeError) Error() string {
-	return fmt.Sprintf("unsupported field type %q", e.Type.ConstName())
 }
 
 func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.DescriptorProto, error) {
@@ -384,13 +351,13 @@ func toProtoEnumDescriptor(fld *gen.Field) (*descriptorpb.EnumDescriptorProto, e
 	}
 	enumName := pascal(fld.Name)
 	dp := &descriptorpb.EnumDescriptorProto{
-		Name:  strptr(enumName),
+		Name:  toPtr(enumName),
 		Value: []*descriptorpb.EnumValueDescriptorProto{},
 	}
 	if !fld.Default {
 		dp.Value = append(dp.Value, &descriptorpb.EnumValueDescriptorProto{
-			Number: int32ptr(0),
-			Name:   strptr(strings.ToUpper(snake(fld.Name)) + "_UNSPECIFIED"),
+			Number: toPtr[int32](0),
+			Name:   toPtr(strings.ToUpper(snake(fld.Name)) + "_UNSPECIFIED"),
 		})
 	}
 	for _, opt := range fld.Enums {
@@ -399,8 +366,8 @@ func toProtoEnumDescriptor(fld *gen.Field) (*descriptorpb.EnumDescriptorProto, e
 			n = strings.ToUpper(snake(fld.Name)) + "_" + n
 		}
 		dp.Value = append(dp.Value, &descriptorpb.EnumValueDescriptorProto{
-			Number: int32ptr(enumAnnotation.Options[opt.Value]),
-			Name:   strptr(n),
+			Number: toPtr(enumAnnotation.Options[opt.Value]),
+			Name:   toPtr(n),
 		})
 	}
 	return dp, nil
@@ -477,12 +444,8 @@ func toProtoFieldDescriptor(f *gen.Field) (*descriptorpb.FieldDescriptorProto, e
 	return fieldDesc, nil
 }
 
-func strptr(s string) *string {
-	return &s
-}
-
-func int32ptr(i int32) *int32 {
-	return &i
+func toPtr[T any](t T) *T {
+	return &t
 }
 
 func extractGenTypeByName(graph *gen.Graph, name string) (*gen.Type, error) {
@@ -493,4 +456,3 @@ func extractGenTypeByName(graph *gen.Graph, name string) (*gen.Type, error) {
 	}
 	return nil, fmt.Errorf("entproto: could not find schema %q in graph", name)
 }
-

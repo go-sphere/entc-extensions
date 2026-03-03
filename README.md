@@ -4,12 +4,11 @@ Utilities that streamline using [ent](https://entgo.io) with protobuf. This repo
 
 ## Modules
 
-| Module | Status | Description |
-|--------|--------|-------------|
-| [`entproto`](./entproto) | **Active** | Fork of the original `entproto`. Strips out RPC/service generation and keeps only the schema-to-protobuf pipeline. Supports automatic annotations and proto3 optional fields. |
-| [`entconv`](./entconv) | **Active** | Generates type-safe conversion functions between Ent structs and protobuf structs. |
-| [`autoproto`](./autoproto) | **Deprecated** | Functionality merged into `entproto`. |
-| [`entgen`](./entgen) | **Deprecated** | Legacy mapper/binder generator. Use `entconv` instead. |
+| Module                   | Description                                                                                                                                                                   |
+|--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [`entproto`](./entproto) | Fork of the original `entproto`. Strips out RPC/service generation and keeps only the schema-to-protobuf pipeline. Supports automatic annotations and proto3 optional fields. |
+| [`entconv`](./entconv)   | Generates type-safe conversion functions between Ent structs and protobuf structs.                                                                                            |
+| [`entcrud`](./entcrud)   | Specialized code generator for CRUD operations on Ent schemas.                                                                                                                |
 
 ## License
 
