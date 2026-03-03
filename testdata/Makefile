@@ -1,6 +1,7 @@
 .PHONY: init test
 
 init:
+	go install github.com/bufbuild/buf/cmd/buf@latest
 	buf dep update
 	buf dep prune
 

@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(go doc entgo.io/ent/gen.Field)",
-      "Bash(go vet ./...)"
-    ]
-  }
-}
