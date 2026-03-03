@@ -37,11 +37,11 @@ func GetModulePath(moduleRoot string) (string, error) {
 		return "", err
 	}
 	// Simple parsing: find line starting with "module "
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(data), "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, ModulePrefix) {
-			return strings.TrimPrefix(line, ModulePrefix), nil
+		if after, ok := strings.CutPrefix(line, ModulePrefix); ok {
+			return after, nil
 		}
 	}
 	return "", fmt.Errorf("module path not found in go.mod")

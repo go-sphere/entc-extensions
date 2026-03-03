@@ -6,15 +6,15 @@ import (
 	"reflect"
 	"strings"
 
-	"entgo.io/contrib/entproto"
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
+	"github.com/go-sphere/entc-extensions/entproto"
 	"github.com/jhump/protoreflect/desc"
 	dpb "google.golang.org/protobuf/types/descriptorpb"
 )
 
 var (
-	binaryMarshallerUnmarshalerType = reflect.TypeOf((*BinaryMarshallerUnmarshaler)(nil)).Elem()
+	binaryMarshallerUnmarshalerType = reflect.TypeFor[BinaryMarshallerUnmarshaler]()
 )
 
 // BinaryMarshallerUnmarshaler is an interface for types that can marshal/unmarshal themselves to/from binary format.
@@ -25,16 +25,18 @@ type BinaryMarshallerUnmarshaler interface {
 
 // Converter holds conversion information for a single field.
 type Converter struct {
-	ToEntConversion             string
-	ToEntScannerConversion      string
-	ToEntConstructor            string
-	ToEntMarshallerConstructor  string
-	ToEntScannerConstructor     string
-	ToEntModifier               string
-	ToProtoConversion           string
-	ToProtoConstructor          string
+	ToEntConversion              string
+	ToEntConversionArg          string // Additional argument for conversion (e.g., nanoseconds for time.Unix)
+	ToEntScannerConversion       string
+	ToEntConstructor             string
+	ToEntMarshallerConstructor   string
+	ToEntScannerConstructor      string
+	ToEntModifier                string
+	ToProtoConversion            string
+	ToProtoConversionModifier    string // Postfix to apply (e.g., .Unix() for time fields)
+	ToProtoConstructor           string
 	ToProtoMarshallerConstructor string
-	ToProtoValuer               string
+	ToProtoValuer                string
 }
 
 // NewConverter creates a Converter for the given field mapping and type name.
@@ -112,8 +114,19 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string, entType
 	case efld.Type.Numeric():
 		out.ToEntConversion = efld.Type.String()
 	case efld.IsTime():
-		out.ToEntConstructor = "runtime.ExtractTime"
-		out.ToProtoConstructor = "timestamppb.New"
+		// Check if the protobuf field is a Timestamp message type
+		if pbd.GetType() == dpb.FieldDescriptorProto_TYPE_MESSAGE &&
+			pbd.GetMessageType().GetFullyQualifiedName() == "google.protobuf.Timestamp" {
+			out.ToEntConstructor = "runtime.ExtractTime"
+			out.ToProtoConstructor = "timestamppb.New"
+		} else if pbd.GetType() == dpb.FieldDescriptorProto_TYPE_INT64 {
+			// For int64 (unix timestamp), use Unix() method
+			out.ToProtoConversion = "Unix"
+			out.ToProtoConversionModifier = ".Unix()" // Postfix to apply to the variable
+			out.ToEntConversion = "time.Unix"
+			out.ToEntConversionArg = "0" // nanoseconds
+		}
+		// If protobuf is neither Timestamp message nor int64, leave as is (no conversion)
 	case efld.IsEnum():
 		enumName := fld.PbFieldDescriptor.GetEnumType().GetName()
 		method := fmt.Sprintf("ToEnt%s_%s", typeName, enumName)
@@ -221,20 +234,20 @@ func implements(r *field.RType, typ reflect.Type) bool {
 		return false
 	}
 	n := typ.NumMethod()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		m0 := typ.Method(i)
 		m1, ok := r.Methods[m0.Name]
 		if !ok || len(m1.In) != m0.Type.NumIn() || len(m1.Out) != m0.Type.NumOut() {
 			return false
 		}
 		in := m0.Type.NumIn()
-		for j := 0; j < in; j++ {
+		for j := range in {
 			if !m1.In[j].TypeEqual(m0.Type.In(j)) {
 				return false
 			}
 		}
 		out := m0.Type.NumOut()
-		for j := 0; j < out; j++ {
+		for j := range out {
 			if !m1.Out[j].TypeEqual(m0.Type.Out(j)) {
 				return false
 			}

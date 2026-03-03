@@ -11,7 +11,7 @@
 {{ $enumName := printf "%s_%s" $typeInfo.Type.Name $enumType.GetName }}
 {{ $pbEnumIdent := protoIdent $enumName }}
 {{ $entLcase := camel $typeInfo.Type.Name }}
-{{ $entEnumIdent := entIdent $entLcase .PbStructField }}
+{{ $entEnumIdent := entIdent $entLcase (.PbStructField | pascal) }}
 {{ $enumFieldPrefix := printf "%s_" (upper (snake $enumType.GetName)) }}
 {{ $omitPrefix := .EntField.Annotations.ProtoEnum.OmitFieldPrefix }}
 {{ $pbConstPrefix := printf "%s_" $typeInfo.Type.Name }}
@@ -68,15 +68,24 @@ func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name 
         {{- $f = printf "*%s" $f }}
     {{- end }}
     {{- $conv := newConverter . $typeInfo.Type.Name }}
-    {{- if $conv.ToProtoConversion }}
+    {{- if $conv.ToProtoConversionModifier }}
+    {{- $f = printf "%s%s" $f $conv.ToProtoConversionModifier }}
+    {{- else if $conv.ToProtoConversion }}
     {{- $f = printf "%s(%s)" $conv.ToProtoConversion $f }}
     {{- end }}
     {{- if $conv.ToProtoConstructor }}
-    {{ $varName }} := {{ ident $conv.ToProtoConstructor }}({{ $f }})
+    {{ $convVar := $conv.ToProtoConstructor }}
+    {{- if or $conv.ToProtoConversion $conv.ToProtoConversionModifier }}
+    {{ $varName }} := {{ ident $convVar }}({{ $f }})
+    {{- else }}
+    {{ $varName }} := {{ ident $convVar }}({{ $f }})
+    {{- end }}
+    {{- else if or $conv.ToProtoConversion $conv.ToProtoConversionModifier }}
+    {{ $varName }} := {{ $f }}
     {{- else }}
     {{ $varName }} := {{ $f }}
     {{- end }}
-    v.{{ .PbStructField }} = {{ $varName }}
+    v.{{ .PbFieldName }} = {{ $varName }}
     {{- if .EntField.Nillable }}
     }
     {{- end }}
@@ -92,12 +101,16 @@ func ToEnt{{ $typeInfo.Type.Name }}(v *{{ protoIdent $typeInfo.Type.Name }}) (*{
     e := &{{ entPackageIdent $typeInfo.Type.Name }}{}
     {{- range $fieldMap.Fields }}
     {{- $fieldName := .EntField.StructField }}
-    {{- $pbField := .PbStructField }}
+    {{- $pbField := .PbFieldName }}
     {{- $conv := newConverter . $typeInfo.Type.Name }}
     {{- if $conv.ToEntConstructor }}
     e.{{ $fieldName }} = {{ ident $conv.ToEntConstructor }}(v.{{ $pbField }})
     {{- else if $conv.ToEntConversion }}
+    {{- if $conv.ToEntConversionArg }}
+    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}(v.{{ $pbField }}, {{ $conv.ToEntConversionArg }})
+    {{- else }}
     e.{{ $fieldName }} = {{ $conv.ToEntConversion }}(v.{{ $pbField }})
+    {{- end }}
     {{- else }}
     e.{{ $fieldName }} = v.{{ $pbField }}
     {{- end }}

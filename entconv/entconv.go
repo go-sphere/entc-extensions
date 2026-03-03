@@ -9,12 +9,12 @@ import (
 	"go/token"
 	"os"
 
-	"entgo.io/contrib/entproto"
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
 	"github.com/go-sphere/entc-extensions/entconv/internal/generator"
 	"github.com/go-sphere/entc-extensions/entconv/internal/pkgutil"
+	"github.com/go-sphere/entc-extensions/entproto"
 	"golang.org/x/tools/imports"
 )
 
