@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"go/format"
 	"io"
 	"io/fs"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"entgo.io/contrib/entproto"
 	"entgo.io/ent/entc/gen"
 	"github.com/go-sphere/entc-extensions/entconv/internal/converter"
+	"golang.org/x/tools/imports"
 )
 
 // templateCache holds the parsed templates to avoid re-parsing on each generation.
@@ -46,12 +48,17 @@ type TypeInfo struct {
 
 // Generator handles code generation for Ent <-> Proto converters.
 type Generator struct {
-	EntPackage    string
-	GoPackageName string
-	GoImportPath  string
-	Types         []TypeInfo
-	Adapter       *entproto.Adapter
-	Graph         *gen.Graph
+	EntPackage   string
+	ConvPackage string
+	// ConvPackagePath is the import path for the proto package.
+	ConvPackagePath string
+	// ProtoAlias is the alias used for the proto package in generated code.
+	ProtoAlias string
+	Types      []TypeInfo
+	Adapter    *entproto.Adapter
+	Graph      *gen.Graph
+	// currentType is the type being generated in single-type mode
+	currentType *TypeInfo
 	// nodeIndex provides O(1) lookup for node names
 	nodeIndex map[string]*gen.Type
 	// typeIndex provides O(1) lookup for type info by name
@@ -59,7 +66,7 @@ type Generator struct {
 }
 
 // New creates a new Generator.
-func New(entPackage, goPackageName, goImportPath string, types []TypeInfo, adapter *entproto.Adapter, graph *gen.Graph) *Generator {
+func New(entPackage, pkg, pkgPath, protoAlias string, types []TypeInfo, adapter *entproto.Adapter, graph *gen.Graph) *Generator {
 	// Build index for O(1) node lookup
 	nodeIndex := make(map[string]*gen.Type, len(graph.Nodes))
 	for _, node := range graph.Nodes {
@@ -73,14 +80,15 @@ func New(entPackage, goPackageName, goImportPath string, types []TypeInfo, adapt
 	}
 
 	return &Generator{
-		EntPackage:    entPackage,
-		GoPackageName: goPackageName,
-		GoImportPath:  goImportPath,
-		Types:         types,
-		Adapter:       adapter,
-		Graph:         graph,
-		nodeIndex:     nodeIndex,
-		typeIndex:     typeIndex,
+		EntPackage:       entPackage,
+		ConvPackage:      pkg,
+		ConvPackagePath:  pkgPath,
+		ProtoAlias:       protoAlias,
+		Types:            types,
+		Adapter:          adapter,
+		Graph:            graph,
+		nodeIndex:        nodeIndex,
+		typeIndex:        typeIndex,
 	}
 }
 
@@ -114,10 +122,75 @@ func (g *Generator) Generate(outputPath string) error {
 	return os.WriteFile(outputPath, buf.Bytes(), 0644)
 }
 
+// GenerateAll generates separate converter files for each type in the output directory.
+func (g *Generator) GenerateAll(outputDir string) error {
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+
+	for _, typeInfo := range g.Types {
+		g.currentType = &typeInfo
+		var buf bytes.Buffer
+		if err := g.generateSingleType(&buf, typeInfo); err != nil {
+			return fmt.Errorf("generating %s: %w", typeInfo.Type.Name, err)
+		}
+
+		formatted, err := format.Source(buf.Bytes())
+		if err != nil {
+			return fmt.Errorf("formatting %s: %w", typeInfo.Type.Name, err)
+		}
+
+		outputPath := fmt.Sprintf("%s/%s.go", outputDir, strings.ToLower(typeInfo.Type.Name))
+		// Use goimports to clean up unused imports
+		optimized, err := imports.Process(outputPath, formatted, nil)
+		if err != nil {
+			return fmt.Errorf("optimizing imports for %s: %w", typeInfo.Type.Name, err)
+		}
+
+		if err := os.WriteFile(outputPath, optimized, 0644); err != nil {
+			return fmt.Errorf("writing %s: %w", typeInfo.Type.Name, err)
+		}
+	}
+
+	return nil
+}
+
 // GenerateToWriter produces the converter code and writes to the provided io.Writer.
 // This method outputs raw code suitable for further processing (formatting, goimports, etc.) by the caller.
 func (g *Generator) GenerateToWriter(w io.Writer) error {
 	return g.generateBody(w)
+}
+
+// generateSingleType generates converter code for a single type.
+func (g *Generator) generateSingleType(w io.Writer, typeInfo TypeInfo) error {
+	// Create a temporary generator with only one type
+	tempGen := &Generator{
+		EntPackage:      g.EntPackage,
+		ConvPackage:    g.ConvPackage,
+		ConvPackagePath: g.ConvPackagePath,
+		ProtoAlias:       g.ProtoAlias,
+		Types:            []TypeInfo{typeInfo},
+		Adapter:          g.Adapter,
+		Graph:            g.Graph,
+		currentType:      &typeInfo,
+		nodeIndex:        g.nodeIndex,
+		typeIndex:        g.typeIndex,
+	}
+
+	tmpl, err := tempGen.getTemplate()
+	if err != nil {
+		return err
+	}
+
+	// Write header with imports
+	tempGen.writeImports(w)
+
+	// Execute template
+	if err := tmpl.Execute(w, tempGen); err != nil {
+		return fmt.Errorf("template execution failed: %w", err)
+	}
+
+	return nil
 }
 
 // generateBody generates the converter code body (with imports) to the writer.
@@ -150,6 +223,11 @@ func (g *Generator) Imports() []string {
 	// Add ent import
 	imp = append(imp, fmt.Sprintf(`ent "%s"`, g.EntPackage))
 
+	// Add proto package import if ConvPackagePath is specified (for separate package generation)
+	if g.ConvPackagePath != "" && g.ProtoAlias != "" {
+		imp = append(imp, fmt.Sprintf(`%s "%s"`, g.ProtoAlias, g.ConvPackagePath))
+	}
+
 	// Check if any type needs the post package (for enums)
 	for _, t := range g.Types {
 		fieldMap, err := g.Adapter.FieldMap(t.Type.Name)
@@ -172,7 +250,7 @@ func (g *Generator) writeImports(w io.Writer) {
 	imports := g.Imports()
 
 	w.Write([]byte("// Code generated by protoc-gen-entconv. DO NOT EDIT.\n"))
-	w.Write([]byte("package " + g.GoPackageName + "\n\n"))
+	w.Write([]byte("package " + g.ConvPackage + "\n\n"))
 	w.Write([]byte("import (\n"))
 	for _, imp := range imports {
 		w.Write([]byte("\t" + imp + "\n"))
@@ -247,7 +325,11 @@ func (g *Generator) entIdent(subpath string, ident string) string {
 
 // protoIdent returns a qualified identifier for the proto package (using import alias).
 func (g *Generator) protoIdent(ident string) string {
-	// Use the package name from import path
+	// If ProtoAlias is specified, use it for separate package generation
+	if g.ProtoAlias != "" {
+		return g.ProtoAlias + "." + ident
+	}
+	// Otherwise, use bare identifier (same package)
 	return ident
 }
 
