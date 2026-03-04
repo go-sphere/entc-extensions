@@ -2,6 +2,7 @@ package bind
 
 import (
 	_ "embed"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -34,23 +35,36 @@ func getBindTemplate() (*template.Template, error) {
 }
 
 // GenBindFunc generates Go code for binding functions.
-func GenBindFunc(action any, conf *conf.EntityConf, customConverters map[string]any) (string, error) {
+func GenBindFunc(action any, entityConf *conf.EntityConf, customConverters map[string]any, strictTypeCheck bool) (string, error) {
 	actionName := inspect.TypeName(action)
-	sourceName := inspect.TypeName(conf.Source)
-	targetName := inspect.TypeName(conf.Target)
+	sourceName := inspect.TypeName(entityConf.Source)
+	targetName := inspect.TypeName(entityConf.Target)
 	funcName := strings.Replace(actionName, sourceName, "", 1) + sourceName
 
-	keys, sourceFields := inspect.ExtractPublicFields(conf.Source, strcase.ToSnake)
-	_, targetFields := inspect.ExtractPublicFields(conf.Target, strcase.ToSnake)
+	keys, sourceFields := inspect.ExtractPublicFields(entityConf.Source, strcase.ToSnake)
+	_, targetFields := inspect.ExtractPublicFields(entityConf.Target, strcase.ToSnake)
 	_, actionMethods := inspect.ExtractPublicMethods(action, strcase.ToSnake)
 
-	ignoreFields := normalizeIgnoredFields(conf.IgnoreFields)
+	ignoreFields := normalizeIgnoredFields(entityConf.IgnoreFields)
 	table := strings.ToLower(sourceName)
-	fields := buildFieldContexts(keys, sourceFields, targetFields, actionMethods, table, ignoreFields, customConverters)
+	fields, mismatches := buildFieldContexts(
+		keys,
+		sourceFields,
+		targetFields,
+		actionMethods,
+		table,
+		ignoreFields,
+		customConverters,
+		strictTypeCheck,
+		sourceName,
+	)
+	if len(mismatches) > 0 {
+		return "", &conf.TypeMismatchListError{Items: mismatches}
+	}
 
 	context := bindContext{
-		SourcePkgName: "ent",                                   // Source uses ent package (e.g., ent.ExampleCreate)
-		TargetPkgName: inspect.ExtractPackageName(conf.Target), // Target uses entpb package
+		SourcePkgName: "ent",                                         // Source uses ent package (e.g., ent.ExampleCreate)
+		TargetPkgName: inspect.ExtractPackageName(entityConf.Target), // Target uses entpb package
 
 		ActionName: actionName,
 		SourceName: sourceName,
@@ -87,8 +101,11 @@ func buildFieldContexts(
 	table string,
 	ignoreFields map[string]struct{},
 	customConverters map[string]any,
-) []fieldContext {
+	strictTypeCheck bool,
+	entityName string,
+) ([]fieldContext, []conf.TypeMismatchError) {
 	fields := make([]fieldContext, 0, len(keys))
+	mismatches := make([]conf.TypeMismatchError, 0)
 	for _, key := range keys {
 		if _, ignored := ignoreFields[key]; ignored {
 			continue
@@ -102,13 +119,19 @@ func buildFieldContexts(
 			continue
 		}
 
-		field, ok := buildFieldContext(key, sourceField, targetField, actionMethods, table, customConverters)
+		field, ok, mismatch := buildFieldContext(key, sourceField, targetField, actionMethods, table, customConverters, entityName)
 		if !ok {
+			continue
+		}
+		if mismatch != nil {
+			if strictTypeCheck {
+				mismatches = append(mismatches, *mismatch)
+			}
 			continue
 		}
 		fields = append(fields, field)
 	}
-	return fields
+	return fields, mismatches
 }
 
 func buildFieldContext(
@@ -118,10 +141,11 @@ func buildFieldContext(
 	actionMethods map[string]reflect.Method,
 	table string,
 	customConverters map[string]any,
-) (fieldContext, bool) {
+	entityName string,
+) (fieldContext, bool, *conf.TypeMismatchError) {
 	setter, hasSetter := actionMethods[strcase.ToSnake("Set"+sourceField.Name)]
 	if !hasSetter {
-		return fieldContext{}, false
+		return fieldContext{}, false, nil
 	}
 
 	settNillable, hasSettNillable := actionMethods[strcase.ToSnake("SetNillable"+sourceField.Name)]
@@ -149,19 +173,24 @@ func buildFieldContext(
 		field.TargetSourceIsSomeType = targetField.Type.String() == sourceField.Type.String()
 	}
 
-	// Skip known incompatible source/target pairs unless a custom converter exists.
-	if !field.TargetSourceIsSomeType && !targetFieldIsPtr &&
-		isKnownIncompatibleTypePair(sourceField.Type.String(), targetField.Type.String()) {
-		field.SkipField = true
-	}
-
 	if converter, ok := customConverters[key]; ok {
 		field.HasCustomConverter = true
 		field.CustomConverter = inspect.GetFuncInfo(converter)
-		field.SkipField = false
+		return field, true, nil
 	}
 
-	return field, true
+	if !field.TargetSourceIsSomeType && !targetFieldIsPtr &&
+		isKnownIncompatibleTypePair(sourceField.Type.String(), targetField.Type.String()) {
+		return field, true, &conf.TypeMismatchError{
+			Entity:     entityName,
+			Field:      sourceField.Name,
+			SourceType: sourceField.Type.String(),
+			TargetType: targetField.Type.String(),
+			Suggestion: fmt.Sprintf("add conf.WithCustomFieldConverter(%s.Field%s, <converter>)", strings.ToLower(entityName), sourceField.Name),
+		}
+	}
+
+	return field, true, nil
 }
 
 func isKnownIncompatibleTypePair(sourceType, targetType string) bool {
@@ -195,7 +224,6 @@ type fieldContext struct {
 
 	TargetFieldIsPtr       bool
 	TargetSourceIsSomeType bool
-	SkipField              bool // Skip this field if types are incompatible
 
 	HasCustomConverter bool
 	CustomConverter    inspect.FuncInfo

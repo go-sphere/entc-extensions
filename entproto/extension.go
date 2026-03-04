@@ -75,7 +75,9 @@ func (e *Extension) hook() gen.Hook {
 				return err
 			}
 			if e.autoFill {
-				FixGraph(g)
+				if err := FixGraph(g); err != nil {
+					return err
+				}
 			}
 			return e.generate(g)
 		})

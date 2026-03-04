@@ -6,8 +6,10 @@ import (
 	entgen "github.com/go-sphere/entc-extensions/entcrud"
 	"github.com/go-sphere/entc-extensions/entcrud/conf"
 	"github.com/go-sphere/entc-extensions/testdata/api/entpb"
+	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/conv"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/post"
+	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/user"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/render/entmap"
 )
 
@@ -19,6 +21,7 @@ func main() {
 			ent.User{},
 			entpb.User{},
 			[]any{ent.UserCreate{}, ent.UserUpdateOne{}},
+			conf.WithCustomFieldConverter(user.FieldBirthday, conv.ToEntUserBirthday),
 		),
 		conf.NewEntity(
 			ent.Post{},

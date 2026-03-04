@@ -125,7 +125,7 @@ func (d *FieldMappingDescriptor) EdgeIDPbStructField() string {
 // EdgeIDPbStructFieldDesc returns the protobuf field descriptor for the id field
 // of the entity this edge refers to.
 func (d *FieldMappingDescriptor) EdgeIDPbStructFieldDesc() *desc.FieldDescriptor {
-	field := strings.Title(camel(d.EntEdge.Type.ID.Name))
+	field := toPascalCase(d.EntEdge.Type.ID.Name)
 	return d.ReferencedPbType.FindFieldByName(snake(field))
 }
 
@@ -166,27 +166,6 @@ func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (
 		m[fld.GetName()] = fd
 	}
 	return m, nil
-}
-
-func extractEntFieldByName(entType *gen.Type, name string) (*gen.Field, error) {
-	if name == entType.ID.Name {
-		return entType.ID, nil
-	}
-	for _, fld := range entType.Fields {
-		if fld.Name == name {
-			return fld, nil
-		}
-	}
-	return nil, fmt.Errorf("entproto: could not find field %q in %q", name, entType.Name)
-}
-
-func extractEntEdgeByName(entType *gen.Type, name string) (*gen.Edge, error) {
-	for _, edg := range entType.Edges {
-		if edg.Name == name {
-			return edg, nil
-		}
-	}
-	return nil, fmt.Errorf("entproto: could not find find edge %q in %q", name, entType.Name)
 }
 
 // Is c an ASCII lower-case letter?

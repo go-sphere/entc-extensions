@@ -39,21 +39,21 @@ func BindFiles(c *conf.FilesConf) error {
 			continue
 		}
 		filename := filenames.Next(strcase.ToSnake(inspect.TypeName(item.Source)))
-		if err := genBindFile(filename, pkgName, c.ExtraImports, item); err != nil {
+		if err := genBindFile(filename, pkgName, c.ExtraImports, item, c.StrictTypeCheck); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *conf.EntityConf) error {
+func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *conf.EntityConf, strictTypeCheck bool) error {
 	var body strings.Builder
 
 	pkgImports := collectImports(item, extraImports)
 
 	for _, act := range item.Actions {
 		pkgImports = append(pkgImports, inspect.ExtractImport(act))
-		funcContent, err := bind.GenBindFunc(act, item, item.CustomFieldConverters)
+		funcContent, err := bind.GenBindFunc(act, item, item.CustomFieldConverters, strictTypeCheck)
 		if err != nil {
 			return err
 		}

@@ -9,6 +9,7 @@ type FilesConf struct {
 	Dir                  string
 	Package              string
 	RemoveBeforeGenerate bool
+	StrictTypeCheck      bool
 	ExtraImports         []inspect.Import
 	Entities             []*EntityConf
 }
@@ -19,8 +20,29 @@ func NewFilesConf(dir string, pkg string, entities ...*EntityConf) *FilesConf {
 		Dir:                  dir,
 		Package:              pkg,
 		RemoveBeforeGenerate: false,
+		StrictTypeCheck:      true,
 		ExtraImports:         nil,
 		Entities:             entities,
+	}
+}
+
+type FilesOption func(*FilesConf)
+
+// Apply applies file-level options and returns itself for chaining.
+func (c *FilesConf) Apply(opts ...FilesOption) *FilesConf {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(c)
+		}
+	}
+	return c
+}
+
+// WithStrictTypeCheck controls whether incompatible field types fail generation.
+// Default is true.
+func WithStrictTypeCheck(strict bool) FilesOption {
+	return func(c *FilesConf) {
+		c.StrictTypeCheck = strict
 	}
 }
 

@@ -118,10 +118,15 @@ func (a *Adapter) parse() error {
 			continue
 		}
 		for _, depPath := range depPaths {
-			if _, seen := protoPackageDeps[protoPkg][depPath]; seen {
+			depSet, ok := protoPackageDeps[protoPkg]
+			if !ok || depSet == nil {
+				depSet = make(map[string]struct{})
+				protoPackageDeps[protoPkg] = depSet
+			}
+			if _, seen := depSet[depPath]; seen {
 				continue
 			}
-			protoPackageDeps[protoPkg][depPath] = struct{}{}
+			depSet[depPath] = struct{}{}
 			fd.Dependency = append(fd.Dependency, depPath)
 		}
 	}
@@ -302,8 +307,10 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 	seen := make(map[int32]struct{})
 	for _, fld := range msg.Field {
 		if _, duplicate := seen[fld.GetNumber()]; duplicate {
-			return nil, fmt.Errorf("entproto: field %d already defined on message %q",
-				fld.GetNumber(), msg.GetName())
+			return nil, &DuplicateFieldNumberError{
+				Message: msg.GetName(),
+				Number:  fld.GetNumber(),
+			}
 		}
 		seen[fld.GetNumber()] = struct{}{}
 	}
@@ -325,7 +332,11 @@ func (a *Adapter) extractEdgeFieldDescriptor(source *gen.Type, e *gen.Edge) (*de
 	}
 
 	if num := int64(edgeAnnotation.Number); num > math.MaxInt32 || num < math.MinInt32 {
-		return nil, fmt.Errorf("value %v overflows int32", num)
+		return nil, &FieldNumberOverflowError{
+			Schema: source.Name,
+			Field:  e.Name,
+			Number: edgeAnnotation.Number,
+		}
 	}
 	fieldNum := int32(edgeAnnotation.Number) //nolint:gosec
 	fieldDesc := &descriptorpb.FieldDescriptorProto{

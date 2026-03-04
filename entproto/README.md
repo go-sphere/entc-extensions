@@ -55,7 +55,7 @@ func main() {
 
 **How `WithAutoFill()` works:**
 - Schemas without `entproto.Message()` annotation automatically get one
-- Fields/edges without `proto.Field()` annotation are assigned auto-generated field numbers (ID field uses 1, others start from 2)
+- Fields/edges without `entproto.Field()` annotation are assigned auto-generated field numbers (ID field uses 1, others start from 2)
 - No need to manually annotate every schema and field
 
 ### Option 2: Manual Annotations
@@ -69,7 +69,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/field"
-	"entgo.io/ent/proto"
+	"github.com/go-sphere/entc-extensions/entproto"
 )
 
 type User struct {
@@ -78,14 +78,14 @@ type User struct {
 
 func (User) Annotations() []schema.Annotation {
 	return []schema.Annotation{
-		proto.Message(),
+		entproto.Message(),
 	}
 }
 
 func (User) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("user_name").
-			Annotations(proto.Field(2)),
+			Annotations(entproto.Field(2)),
 	}
 }
 ```
@@ -104,7 +104,7 @@ syntax = "proto3";
 
 package entpb;
 
-option go_package = "entgo.io/contrib/entproto/internal/todo/ent/proto/entpb";
+option go_package = "github.com/go-sphere/entc-extensions/testdata/api/entpb";
 
 message User {
   int32 id = 1;
@@ -168,8 +168,8 @@ By default the proto package name for the generated files will be `entpb` but it
 ```go
 
 func (MessageWithPackageName) Annotations() []schema.Annotation {
-	return []schema.Annotation{proto.Message(
-		proto.PackageName("io.entgo.apps.todo"),
+	return []schema.Annotation{entproto.Message(
+		entproto.PackageName("io.entgo.apps.todo"),
 	)}
 }
 ```
@@ -198,16 +198,16 @@ This is useful in cases where a `Mixin` is used and its default behavior enables
 
 ## Field Annotations
 
-### proto.Field
+### entproto.Field
 
-All fields must be annotated with `proto.Field` to specify their proto field numbers
+All fields must be annotated with `entproto.Field` to specify their proto field numbers
 
 ```go
 // Fields of the User.
 func (User) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("name").
-			Annotations(proto.Field(2)),
+			Annotations(entproto.Field(2)),
 	}
 }
 ```
@@ -380,7 +380,7 @@ Ent allows special characters in enum values. For such values, any special chara
 
 ## Edges
 
-Edges are annotated in the same way as fields: using `proto.Field` annotation to specify the field number for the generated field. Unique relations are mapped to normal fields, non-unique relations are mapped to `repeated` fields.
+Edges are annotated in the same way as fields: using `entproto.Field` annotation to specify the field number for the generated field. Unique relations are mapped to normal fields, non-unique relations are mapped to `repeated` fields.
 For example:
 
 ```go

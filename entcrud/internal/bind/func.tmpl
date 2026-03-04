@@ -2,9 +2,6 @@
 func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.TargetPkgName}}.{{.TargetName}}, options ...Option) *{{.SourcePkgName}}.{{.ActionName}} {
 	option := NewBindOptions(options...)
 {{- range .Fields}}
-{{- if .SkipField}}
-	// Skipped: incompatible types ({{.SourceField.Type}} <- {{.TargetField.Type}}), use custom converter
-{{- else}}
 	if option.CanSetField({{.FieldKeyPath}}) {
 		{{- if .HasCustomConverter}}
 			{{- if .TargetFieldIsPtr}}
@@ -74,7 +71,6 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 			}
 		{{- end}}
 	}
-{{- end}}
 {{- end}}
 	return source
 }

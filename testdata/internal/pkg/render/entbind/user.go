@@ -3,6 +3,7 @@ package entbind
 
 import (
 	"github.com/go-sphere/entc-extensions/testdata/api/entpb"
+	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/conv"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/user"
 )
@@ -29,7 +30,9 @@ func CreateUser(source *ent.UserCreate, target *entpb.User, options ...Option) *
 			source.SetScore(target.Score)
 		}
 	}
-	// Skipped: incompatible types (time.Time <- int64), use custom converter
+	if option.CanSetField(user.FieldBirthday) {
+		source.SetBirthday(conv.ToEntUserBirthday(target.Birthday))
+	}
 	if option.CanSetField(user.FieldAvatar) {
 		if option.CanSetZero(user.FieldAvatar) || target.Avatar != nil {
 			source.SetAvatar(target.Avatar)
@@ -80,7 +83,11 @@ func UpdateOneUser(source *ent.UserUpdateOne, target *entpb.User, options ...Opt
 			source.SetScore(target.Score)
 		}
 	}
-	// Skipped: incompatible types (time.Time <- int64), use custom converter
+	if option.CanSetField(user.FieldBirthday) {
+		if option.CanSetZero(user.FieldBirthday) || target.Birthday != 0 {
+			source.SetBirthday(conv.ToEntUserBirthday(target.Birthday))
+		}
+	}
 	if option.CanSetField(user.FieldAvatar) {
 		if option.CanSetZero(user.FieldAvatar) || target.Avatar != nil {
 			source.SetAvatar(target.Avatar)

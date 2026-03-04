@@ -1,11 +1,10 @@
 module github.com/go-sphere/entc-extensions/entcrud
 
-go 1.26.0
+go 1.25
 
 require golang.org/x/tools v0.42.0
 
 require (
-	github.com/jhump/protoreflect v1.10.1 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 )

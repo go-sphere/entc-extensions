@@ -1,4 +1,4 @@
-name: Build and Test
+name: Build and Verify
 permissions:
   contents: read
 
@@ -9,13 +9,33 @@ on:
     branches: [ "master" ]
 
 jobs:
-  build:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.25.x', '1.26.x']
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+    - name: Install testdata tooling
+      run: cd testdata && make init
+    - name: Verify
+      run: make verify
+
+  regen-check:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '>=1.24'
-    - name: Test
-      run: cd testdata && make init && make test
+        go-version: '1.26.x'
+    - name: Install testdata tooling
+      run: cd testdata && make init
+    - name: Regenerate files
+      run: make regen
+    - name: Ensure generated files are committed
+      run: git diff --exit-code

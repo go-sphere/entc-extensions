@@ -93,7 +93,8 @@ func ExtractPublicFields(obj any, keyMapper func(string) string) ([]string, map[
 	keys := make([]string, 0, typ.NumField())
 	fields := make(map[string]reflect.StructField)
 
-	for field := range typ.Fields() {
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
 		if !field.IsExported() || field.Anonymous {
 			continue
 		}
@@ -126,7 +127,8 @@ func ExtractPublicMethods(obj any, keyMapper func(string) string) ([]string, map
 	seen := make(map[string]struct{})
 
 	for _, typ := range types {
-		for m := range typ.Methods() {
+		for i := 0; i < typ.NumMethod(); i++ {
+			m := typ.Method(i)
 			if !m.IsExported() {
 				continue
 			}
@@ -211,12 +213,6 @@ func GenerateTypeConversion(targetField, sourceField reflect.StructField) string
 
 // GenerateTypeConversionExpr generates Go code for type conversion expression.
 func GenerateTypeConversionExpr(targetField, sourceField reflect.StructField) string {
-	// Check for incompatible types - return a comment indicating manual handling needed
-	// This happens when ent uses time.Time but entpb uses int64 (unix timestamp)
-	if sourceField.Type.String() == "time.Time" && targetField.Type.Kind() == reflect.Int64 {
-		// Return a placeholder that will cause a compile error, reminding user to add custom converter
-		return fmt.Sprintf("/* TODO: add custom converter for %s: time.Time <- int64 */target.%s", targetField.Name, targetField.Name)
-	}
 	// Default: use source field type for conversion
 	return fmt.Sprintf("%s(target.%s)", sourceField.Type.String(), targetField.Name)
 }

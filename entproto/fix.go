@@ -1,7 +1,6 @@
 package entproto
 
 import (
-	"fmt"
 	"sort"
 
 	"entgo.io/ent/entc/gen"
@@ -10,23 +9,30 @@ import (
 
 // FixGraph automatically adds entproto annotations to schemas that don't have them.
 // It adds Message annotation to schemas, Field annotation to fields and edges.
-func FixGraph(g *gen.Graph) {
+func FixGraph(g *gen.Graph) error {
 	for _, node := range g.Nodes {
-		fixNode(node)
+		if err := fixNode(node); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func fixNode(node *gen.Type) {
+func fixNode(node *gen.Type) error {
 	if node.Annotations == nil {
 		node.Annotations = make(map[string]any, 1)
 	}
 	if node.Annotations[MessageAnnotation] != nil {
-		return
+		return nil
 	}
 	// If the node does not have the message annotation, add it.
 	node.Annotations[MessageAnnotation] = Message()
 
-	idGenerator := &fieldIDGenerator{exist: extractExistFieldID(node)}
+	exist, err := extractExistFieldID(node)
+	if err != nil {
+		return err
+	}
+	idGenerator := &fieldIDGenerator{schema: node.Name, exist: exist}
 
 	// Sort fields: own fields first, then mixed-in fields
 	sort.Slice(node.Fields, func(i, j int) bool {
@@ -37,52 +43,71 @@ func fixNode(node *gen.Type) {
 	})
 
 	// Add annotation for ID field
-	addAnnotationForField(node.ID, idGenerator)
+	if err := addAnnotationForField(node.ID, idGenerator); err != nil {
+		return err
+	}
 
 	// Add annotation for other fields
 	for j := range node.Fields {
-		addAnnotationForField(node.Fields[j], idGenerator)
+		if err := addAnnotationForField(node.Fields[j], idGenerator); err != nil {
+			return err
+		}
 	}
 
 	// Add annotation for edges
 	for j := range node.Edges {
-		addAnnotationForEdge(node.Edges[j], idGenerator)
+		if err := addAnnotationForEdge(node.Edges[j], idGenerator); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) {
+func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) error {
 	if ed.Annotations == nil {
 		ed.Annotations = make(map[string]any, 1)
 	}
 	if ed.Annotations[FieldAnnotation] != nil {
-		return
+		return nil
 	}
 	if ed.Annotations[SkipAnnotation] != nil {
-		return
+		return nil
 	}
-	ed.Annotations[FieldAnnotation] = Field(idGenerator.MustNext())
+	num, err := idGenerator.Next(ed.Name)
+	if err != nil {
+		return err
+	}
+	ed.Annotations[FieldAnnotation] = Field(num)
+	return nil
 }
 
-func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator) {
+func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator) error {
 	if fd.Annotations == nil {
 		fd.Annotations = make(map[string]any, 1)
 	}
 	if fd.Annotations[FieldAnnotation] != nil {
-		return
+		return nil
 	}
 	if fd.Annotations[SkipAnnotation] != nil {
-		return
+		return nil
 	}
 
-	fd.Annotations[FieldAnnotation] = Field(idGenerator.MustNext())
+	num, err := idGenerator.Next(fd.Name)
+	if err != nil {
+		return err
+	}
+
+	fd.Annotations[FieldAnnotation] = Field(num)
+	return nil
 }
 
 type fieldIDGenerator struct {
+	schema  string
 	current int
 	exist   map[int]struct{}
 }
 
-func (f *fieldIDGenerator) Next() (int, error) {
+func (f *fieldIDGenerator) Next(field string) (int, error) {
 	f.current++
 	for {
 		if _, ok := f.exist[f.current]; ok {
@@ -90,22 +115,18 @@ func (f *fieldIDGenerator) Next() (int, error) {
 			continue
 		}
 		if f.current > 536870911 {
-			return 0, fmt.Errorf("entproto: field number exceeds the maximum value 536870911")
+			return 0, &FieldNumberOverflowError{
+				Schema: f.schema,
+				Field:  field,
+				Number: f.current,
+			}
 		}
 		break
 	}
 	return f.current, nil
 }
 
-func (f *fieldIDGenerator) MustNext() int {
-	num, err := f.Next()
-	if err != nil {
-		panic(err)
-	}
-	return num
-}
-
-func extractExistFieldID(node *gen.Type) map[int]struct{} {
+func extractExistFieldID(node *gen.Type) (map[int]struct{}, error) {
 	existNums := map[int]struct{}{}
 	for _, fd := range node.Fields {
 		if fd.Annotations != nil {
@@ -115,7 +136,12 @@ func extractExistFieldID(node *gen.Type) map[int]struct{} {
 				}{}
 				err := mapstructure.Decode(obj, &pbField)
 				if err != nil {
-					panic(fmt.Errorf("entproto: failed decoding field annotation: %w", err))
+					return nil, &InvalidAnnotationError{
+						Schema:     node.Name,
+						Field:      fd.Name,
+						Annotation: FieldAnnotation,
+						Cause:      err,
+					}
 				}
 				existNums[pbField.Number] = struct{}{}
 			}
@@ -130,11 +156,16 @@ func extractExistFieldID(node *gen.Type) map[int]struct{} {
 				}{}
 				err := mapstructure.Decode(obj, &pbField)
 				if err != nil {
-					panic(fmt.Errorf("entproto: failed decoding edge annotation: %w", err))
+					return nil, &InvalidAnnotationError{
+						Schema:     node.Name,
+						Edge:       ed.Name,
+						Annotation: FieldAnnotation,
+						Cause:      err,
+					}
 				}
 				existNums[pbField.Number] = struct{}{}
 			}
 		}
 	}
-	return existNums
+	return existNums, nil
 }
