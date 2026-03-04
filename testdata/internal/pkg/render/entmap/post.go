@@ -50,6 +50,8 @@ func ToProtoPost(e *ent.Post) (*entpb.Post, error) {
 	v.Likes = likes
 	published := e.Published
 	v.Published = published
+	shares := e.Shares
+	v.Shares = shares
 
 	status := ToProtoPost_Status(e.Status)
 	v.Status = status
@@ -70,6 +72,7 @@ func ToEntPost(v *entpb.Post) (*ent.Post, error) {
 	e.ID = int(v.Id)
 	e.Likes = int64(v.Likes)
 	e.Published = v.Published
+	e.Shares = uint32(v.Shares)
 	e.Status = ToEntPost_Status(v.Status)
 	e.Title = v.Title
 	e.ViewCount = int(v.ViewCount)

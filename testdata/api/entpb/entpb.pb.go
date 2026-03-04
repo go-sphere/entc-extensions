@@ -72,7 +72,83 @@ func (x Post_Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Post_Status.Descriptor instead.
 func (Post_Status) EnumDescriptor() ([]byte, []int) {
-	return file_entpb_entpb_proto_rawDescGZIP(), []int{0, 0}
+	return file_entpb_entpb_proto_rawDescGZIP(), []int{1, 0}
+}
+
+type Group struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Active        bool                   `protobuf:"varint,3,opt,name=active,proto3" json:"active,omitempty"`
+	Labels        []string               `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty"`
+	Users         []*User                `protobuf:"bytes,5,rep,name=users,proto3" json:"users,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Group) Reset() {
+	*x = Group{}
+	mi := &file_entpb_entpb_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Group) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Group) ProtoMessage() {}
+
+func (x *Group) ProtoReflect() protoreflect.Message {
+	mi := &file_entpb_entpb_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Group.ProtoReflect.Descriptor instead.
+func (*Group) Descriptor() ([]byte, []int) {
+	return file_entpb_entpb_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *Group) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *Group) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Group) GetActive() bool {
+	if x != nil {
+		return x.Active
+	}
+	return false
+}
+
+func (x *Group) GetLabels() []string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *Group) GetUsers() []*User {
+	if x != nil {
+		return x.Users
+	}
+	return nil
 }
 
 type Post struct {
@@ -84,13 +160,15 @@ type Post struct {
 	Published     bool                   `protobuf:"varint,5,opt,name=published,proto3" json:"published,omitempty"`
 	Status        Post_Status            `protobuf:"varint,6,opt,name=status,proto3,enum=entpb.Post_Status" json:"status,omitempty"`
 	Likes         int64                  `protobuf:"varint,7,opt,name=likes,proto3" json:"likes,omitempty"`
+	Shares        uint32                 `protobuf:"varint,8,opt,name=shares,proto3" json:"shares,omitempty"`
+	Author        *User                  `protobuf:"bytes,9,opt,name=author,proto3" json:"author,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Post) Reset() {
 	*x = Post{}
-	mi := &file_entpb_entpb_proto_msgTypes[0]
+	mi := &file_entpb_entpb_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -102,7 +180,7 @@ func (x *Post) String() string {
 func (*Post) ProtoMessage() {}
 
 func (x *Post) ProtoReflect() protoreflect.Message {
-	mi := &file_entpb_entpb_proto_msgTypes[0]
+	mi := &file_entpb_entpb_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -115,7 +193,7 @@ func (x *Post) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Post.ProtoReflect.Descriptor instead.
 func (*Post) Descriptor() ([]byte, []int) {
-	return file_entpb_entpb_proto_rawDescGZIP(), []int{0}
+	return file_entpb_entpb_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Post) GetId() int64 {
@@ -167,6 +245,20 @@ func (x *Post) GetLikes() int64 {
 	return 0
 }
 
+func (x *Post) GetShares() uint32 {
+	if x != nil {
+		return x.Shares
+	}
+	return 0
+}
+
+func (x *Post) GetAuthor() *User {
+	if x != nil {
+		return x.Author
+	}
+	return nil
+}
+
 type User struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -180,13 +272,19 @@ type User struct {
 	Email         string                 `protobuf:"bytes,9,opt,name=email,proto3" json:"email,omitempty"`
 	Balance       int64                  `protobuf:"varint,10,opt,name=balance,proto3" json:"balance,omitempty"`
 	Role          uint32                 `protobuf:"varint,11,opt,name=role,proto3" json:"role,omitempty"`
+	Rank          int32                  `protobuf:"varint,12,opt,name=rank,proto3" json:"rank,omitempty"`
+	Quota         uint64                 `protobuf:"varint,13,opt,name=quota,proto3" json:"quota,omitempty"`
+	Tags          []string               `protobuf:"bytes,14,rep,name=tags,proto3" json:"tags,omitempty"`
+	Points        []int64                `protobuf:"varint,15,rep,packed,name=points,proto3" json:"points,omitempty"`
+	Posts         []*Post                `protobuf:"bytes,16,rep,name=posts,proto3" json:"posts,omitempty"`
+	Groups        []*Group               `protobuf:"bytes,17,rep,name=groups,proto3" json:"groups,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *User) Reset() {
 	*x = User{}
-	mi := &file_entpb_entpb_proto_msgTypes[1]
+	mi := &file_entpb_entpb_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -198,7 +296,7 @@ func (x *User) String() string {
 func (*User) ProtoMessage() {}
 
 func (x *User) ProtoReflect() protoreflect.Message {
-	mi := &file_entpb_entpb_proto_msgTypes[1]
+	mi := &file_entpb_entpb_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -211,7 +309,7 @@ func (x *User) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use User.ProtoReflect.Descriptor instead.
 func (*User) Descriptor() ([]byte, []int) {
-	return file_entpb_entpb_proto_rawDescGZIP(), []int{1}
+	return file_entpb_entpb_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *User) GetId() int64 {
@@ -291,11 +389,59 @@ func (x *User) GetRole() uint32 {
 	return 0
 }
 
+func (x *User) GetRank() int32 {
+	if x != nil {
+		return x.Rank
+	}
+	return 0
+}
+
+func (x *User) GetQuota() uint64 {
+	if x != nil {
+		return x.Quota
+	}
+	return 0
+}
+
+func (x *User) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *User) GetPoints() []int64 {
+	if x != nil {
+		return x.Points
+	}
+	return nil
+}
+
+func (x *User) GetPosts() []*Post {
+	if x != nil {
+		return x.Posts
+	}
+	return nil
+}
+
+func (x *User) GetGroups() []*Group {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
 var File_entpb_entpb_proto protoreflect.FileDescriptor
 
 const file_entpb_entpb_proto_rawDesc = "" +
 	"\n" +
-	"\x11entpb/entpb.proto\x12\x05entpb\"\xa4\x02\n" +
+	"\x11entpb/entpb.proto\x12\x05entpb\"~\n" +
+	"\x05Group\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06active\x18\x03 \x01(\bR\x06active\x12\x16\n" +
+	"\x06labels\x18\x04 \x03(\tR\x06labels\x12!\n" +
+	"\x05users\x18\x05 \x03(\v2\v.entpb.UserR\x05users\"\xe1\x02\n" +
 	"\x04Post\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x18\n" +
@@ -304,12 +450,14 @@ const file_entpb_entpb_proto_rawDesc = "" +
 	"view_count\x18\x04 \x01(\x03R\tviewCount\x12\x1c\n" +
 	"\tpublished\x18\x05 \x01(\bR\tpublished\x12*\n" +
 	"\x06status\x18\x06 \x01(\x0e2\x12.entpb.Post.StatusR\x06status\x12\x14\n" +
-	"\x05likes\x18\a \x01(\x03R\x05likes\"]\n" +
+	"\x05likes\x18\a \x01(\x03R\x05likes\x12\x16\n" +
+	"\x06shares\x18\b \x01(\rR\x06shares\x12#\n" +
+	"\x06author\x18\t \x01(\v2\v.entpb.UserR\x06author\"]\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x16\n" +
 	"\x12STATUS_IN_PROGRESS\x10\x02\x12\x0f\n" +
-	"\vSTATUS_DONE\x10\x03\"\xfa\x01\n" +
+	"\vSTATUS_DONE\x10\x03\"\x99\x03\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
@@ -322,7 +470,13 @@ const file_entpb_entpb_proto_rawDesc = "" +
 	"\x05email\x18\t \x01(\tR\x05email\x12\x18\n" +
 	"\abalance\x18\n" +
 	" \x01(\x03R\abalance\x12\x12\n" +
-	"\x04role\x18\v \x01(\rR\x04roleB\x84\x01\n" +
+	"\x04role\x18\v \x01(\rR\x04role\x12\x12\n" +
+	"\x04rank\x18\f \x01(\x05R\x04rank\x12\x14\n" +
+	"\x05quota\x18\r \x01(\x04R\x05quota\x12\x12\n" +
+	"\x04tags\x18\x0e \x03(\tR\x04tags\x12\x16\n" +
+	"\x06points\x18\x0f \x03(\x03R\x06points\x12!\n" +
+	"\x05posts\x18\x10 \x03(\v2\v.entpb.PostR\x05posts\x12$\n" +
+	"\x06groups\x18\x11 \x03(\v2\f.entpb.GroupR\x06groupsB\x84\x01\n" +
 	"\tcom.entpbB\n" +
 	"EntpbProtoP\x01Z7github.com/go-sphere/entc-extensions/testdata/api/entpb\xa2\x02\x03EXX\xaa\x02\x05Entpb\xca\x02\x05Entpb\xe2\x02\x11Entpb\\GPBMetadata\xea\x02\x05Entpbb\x06proto3"
 
@@ -339,19 +493,24 @@ func file_entpb_entpb_proto_rawDescGZIP() []byte {
 }
 
 var file_entpb_entpb_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_entpb_entpb_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_entpb_entpb_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_entpb_entpb_proto_goTypes = []any{
 	(Post_Status)(0), // 0: entpb.Post.Status
-	(*Post)(nil),     // 1: entpb.Post
-	(*User)(nil),     // 2: entpb.User
+	(*Group)(nil),    // 1: entpb.Group
+	(*Post)(nil),     // 2: entpb.Post
+	(*User)(nil),     // 3: entpb.User
 }
 var file_entpb_entpb_proto_depIdxs = []int32{
-	0, // 0: entpb.Post.status:type_name -> entpb.Post.Status
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	3, // 0: entpb.Group.users:type_name -> entpb.User
+	0, // 1: entpb.Post.status:type_name -> entpb.Post.Status
+	3, // 2: entpb.Post.author:type_name -> entpb.User
+	2, // 3: entpb.User.posts:type_name -> entpb.Post
+	1, // 4: entpb.User.groups:type_name -> entpb.Group
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_entpb_entpb_proto_init() }
@@ -365,7 +524,7 @@ func file_entpb_entpb_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_entpb_entpb_proto_rawDesc), len(file_entpb_entpb_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

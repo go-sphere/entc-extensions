@@ -29,12 +29,20 @@ func ToProtoUser(e *ent.User) (*entpb.User, error) {
 	v.Id = id
 	name := e.Name
 	v.Name = name
+	points := e.Points
+	v.Points = points
+	quota := e.Quota
+	v.Quota = quota
+	rank := int32(e.Rank)
+	v.Rank = rank
 	role := uint32(e.Role)
 	v.Role = role
 	score := e.Score
 	v.Score = score
 	status := e.Status
 	v.Status = status
+	tags := e.Tags
+	v.Tags = tags
 	return v, nil
 }
 
@@ -52,8 +60,12 @@ func ToEntUser(v *entpb.User) (*ent.User, error) {
 	e.Email = v.Email
 	e.ID = int64(v.Id)
 	e.Name = v.Name
+	e.Points = v.Points
+	e.Quota = uint64(v.Quota)
+	e.Rank = int8(v.Rank)
 	e.Role = uint(v.Role)
 	e.Score = float64(v.Score)
 	e.Status = v.Status
+	e.Tags = v.Tags
 	return e, nil
 }

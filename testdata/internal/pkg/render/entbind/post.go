@@ -43,6 +43,11 @@ func CreatePost(source *ent.PostCreate, target *entpb.Post, options ...Option) *
 			source.SetLikes(target.Likes)
 		}
 	}
+	if option.CanSetField(post.FieldShares) {
+		if option.CanSetZero(post.FieldShares) || target.Shares != 0 {
+			source.SetShares(target.Shares)
+		}
+	}
 	return source
 }
 
@@ -76,6 +81,11 @@ func UpdateOnePost(source *ent.PostUpdateOne, target *entpb.Post, options ...Opt
 	if option.CanSetField(post.FieldLikes) {
 		if option.CanSetZero(post.FieldLikes) || target.Likes != 0 {
 			source.SetLikes(target.Likes)
+		}
+	}
+	if option.CanSetField(post.FieldShares) {
+		if option.CanSetZero(post.FieldShares) || target.Shares != 0 {
+			source.SetShares(target.Shares)
 		}
 	}
 	return source

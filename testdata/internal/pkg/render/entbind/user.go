@@ -58,6 +58,26 @@ func CreateUser(source *ent.UserCreate, target *entpb.User, options ...Option) *
 			source.SetRole(uint(target.Role))
 		}
 	}
+	if option.CanSetField(user.FieldRank) {
+		if option.CanSetZero(user.FieldRank) || target.Rank != 0 {
+			source.SetRank(int8(target.Rank))
+		}
+	}
+	if option.CanSetField(user.FieldQuota) {
+		if option.CanSetZero(user.FieldQuota) || target.Quota != 0 {
+			source.SetQuota(target.Quota)
+		}
+	}
+	if option.CanSetField(user.FieldTags) {
+		if option.CanSetZero(user.FieldTags) || target.Tags != nil {
+			source.SetTags(target.Tags)
+		}
+	}
+	if option.CanSetField(user.FieldPoints) {
+		if option.CanSetZero(user.FieldPoints) || target.Points != nil {
+			source.SetPoints(target.Points)
+		}
+	}
 	return source
 }
 
@@ -111,6 +131,26 @@ func UpdateOneUser(source *ent.UserUpdateOne, target *entpb.User, options ...Opt
 	if option.CanSetField(user.FieldRole) {
 		if option.CanSetZero(user.FieldRole) || target.Role != 0 {
 			source.SetRole(uint(target.Role))
+		}
+	}
+	if option.CanSetField(user.FieldRank) {
+		if option.CanSetZero(user.FieldRank) || target.Rank != 0 {
+			source.SetRank(int8(target.Rank))
+		}
+	}
+	if option.CanSetField(user.FieldQuota) {
+		if option.CanSetZero(user.FieldQuota) || target.Quota != 0 {
+			source.SetQuota(target.Quota)
+		}
+	}
+	if option.CanSetField(user.FieldTags) {
+		if option.CanSetZero(user.FieldTags) || target.Tags != nil {
+			source.SetTags(target.Tags)
+		}
+	}
+	if option.CanSetField(user.FieldPoints) {
+		if option.CanSetZero(user.FieldPoints) || target.Points != nil {
+			source.SetPoints(target.Points)
 		}
 	}
 	return source

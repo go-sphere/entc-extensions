@@ -29,6 +29,12 @@ func main() {
 			[]any{ent.PostCreate{}, ent.PostUpdateOne{}},
 			conf.WithCustomFieldConverter(post.FieldStatus, entmap.ToEntPost_Status),
 		),
+		conf.NewEntity(
+			ent.Group{},
+			entpb.Group{},
+			[]any{ent.GroupCreate{}, ent.GroupUpdateOne{}},
+			conf.WithIgnoreFields("users"),
+		),
 	)
 	if err := entgen.BindFiles(config); err != nil {
 		log.Fatal(err)

@@ -3,6 +3,7 @@ package schema
 import (
 	"entgo.io/ent"
 	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"github.com/go-sphere/entc-extensions/entproto"
 )
@@ -39,5 +40,22 @@ func (User) Fields() []ent.Field {
 			Annotations(entproto.Field(10)),
 		field.Uint("role").
 			Annotations(entproto.Field(11)),
+		field.Int8("rank").
+			Annotations(entproto.Field(12)),
+		field.Uint64("quota").
+			Annotations(entproto.Field(13)),
+		field.JSON("tags", []string{}).
+			Annotations(entproto.Field(14)),
+		field.JSON("points", []int64{}).
+			Annotations(entproto.Field(15)),
+	}
+}
+
+func (User) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.To("posts", Post.Type).
+			Annotations(entproto.Field(16)),
+		edge.To("groups", Group.Type).
+			Annotations(entproto.Field(17)),
 	}
 }

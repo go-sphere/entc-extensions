@@ -3,6 +3,7 @@ package schema
 import (
 	"entgo.io/ent"
 	"entgo.io/ent/schema"
+	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"github.com/go-sphere/entc-extensions/entproto"
 )
@@ -41,5 +42,16 @@ func (Post) Fields() []ent.Field {
 			),
 		field.Int64("likes").
 			Annotations(entproto.Field(7)),
+		field.Uint32("shares").
+			Annotations(entproto.Field(8)),
+	}
+}
+
+func (Post) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.From("author", User.Type).
+			Ref("posts").
+			Unique().
+			Annotations(entproto.Field(9)),
 	}
 }

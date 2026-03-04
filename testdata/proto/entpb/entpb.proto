@@ -5,6 +5,18 @@ package entpb;
 
 option go_package = "github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/proto/entpb";
 
+message Group {
+  int64 id = 1;
+
+  string name = 2;
+
+  bool active = 3;
+
+  repeated string labels = 4;
+
+  repeated User users = 5;
+}
+
 message Post {
   int64 id = 1;
 
@@ -19,6 +31,10 @@ message Post {
   Status status = 6;
 
   int64 likes = 7;
+
+  uint32 shares = 8;
+
+  User author = 9;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;
@@ -53,4 +69,16 @@ message User {
   int64 balance = 10;
 
   uint32 role = 11;
+
+  int32 rank = 12;
+
+  uint64 quota = 13;
+
+  repeated string tags = 14;
+
+  repeated int64 points = 15;
+
+  repeated Post posts = 16;
+
+  repeated Group groups = 17;
 }
