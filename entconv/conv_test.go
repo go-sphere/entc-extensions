@@ -1,6 +1,8 @@
 package entconv
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -124,6 +126,9 @@ func TestDefaultOptions_UsesScaffoldDefaults(t *testing.T) {
 	if opts.ProtoAlias != "entpb" {
 		t.Fatalf("ProtoAlias default = %q, want entpb", opts.ProtoAlias)
 	}
+	if opts.MissingProtoPolicy != MissingProtoPolicyStrict {
+		t.Fatalf("MissingProtoPolicy default = %q, want %q", opts.MissingProtoPolicy, MissingProtoPolicyStrict)
+	}
 
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -136,6 +141,53 @@ func TestDefaultOptions_UsesScaffoldDefaults(t *testing.T) {
 	}
 	if opts.ProtoPackagePath != wantProtoPath {
 		t.Fatalf("ProtoPackagePath default = %q, want %q", opts.ProtoPackagePath, wantProtoPath)
+	}
+}
+
+func TestGenerateConverter_StrictMissingProtoPolicyFails(t *testing.T) {
+	opts := testOptions(t, "entpb")
+	opts.ProtoFile = writeProtoFixture(t, "missingpb", "NotUser")
+	opts.MissingProtoPolicy = MissingProtoPolicyStrict
+
+	_, err := GenerateConverter(opts)
+	if err == nil {
+		t.Fatal("expected error when proto message is missing")
+	}
+	var missing *MissingProtoMessagesError
+	if !errors.As(err, &missing) {
+		t.Fatalf("expected MissingProtoMessagesError, got %T (%v)", err, err)
+	}
+	if len(missing.Missing) != 2 || missing.Missing[0] != "Post" || missing.Missing[1] != "User" {
+		t.Fatalf("missing messages = %v, want [Post User]", missing.Missing)
+	}
+}
+
+func TestGenerateConverter_WarnMissingProtoPolicyContinues(t *testing.T) {
+	opts := testOptions(t, "warnpb")
+	opts.ProtoFile = writeProtoFixture(t, "warnpb", "User")
+	opts.MissingProtoPolicy = MissingProtoPolicyWarn
+
+	var warned error
+	opts.WarningHandler = func(err error) {
+		warned = err
+	}
+
+	code, err := GenerateConverter(opts)
+	if err != nil {
+		t.Fatalf("GenerateConverter failed with warn policy: %v", err)
+	}
+	if len(code) == 0 {
+		t.Fatal("expected non-empty generated code")
+	}
+	if warned == nil {
+		t.Fatal("expected warning callback to be called")
+	}
+	var missing *MissingProtoMessagesError
+	if !errors.As(warned, &missing) {
+		t.Fatalf("warning type = %T, want *MissingProtoMessagesError", warned)
+	}
+	if len(missing.Missing) != 1 || missing.Missing[0] != "Post" {
+		t.Fatalf("missing messages = %v, want [Post]", missing.Missing)
 	}
 }
 
@@ -179,4 +231,14 @@ func moduleRoot(t *testing.T) string {
 		t.Fatal("failed to locate test file path")
 	}
 	return filepath.Dir(file)
+}
+
+func writeProtoFixture(t *testing.T, pkg, msg string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "fixture.pb.go")
+	content := fmt.Sprintf("package %s\ntype %s struct{}\n", pkg, msg)
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture pb.go: %v", err)
+	}
+	return file
 }

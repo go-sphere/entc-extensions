@@ -35,7 +35,7 @@ Annotate your Ent schema with `entproto` annotations:
 package schema
 
 import (
-    "entgo.io/contrib/entproto"
+    "github.com/go-sphere/entc-extensions/entproto"
     "entgo.io/ent"
     "entgo.io/ent/schema"
     "entgo.io/ent/schema/field"

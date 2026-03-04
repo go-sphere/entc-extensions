@@ -1,6 +1,6 @@
 module github.com/go-sphere/entc-extensions/entconv
 
-go 1.25.7
+go 1.25
 
 require (
 	entgo.io/ent v0.14.5
@@ -22,7 +22,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/hcl/v2 v2.18.1 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

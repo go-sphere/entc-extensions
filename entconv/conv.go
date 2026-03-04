@@ -2,14 +2,16 @@ package entconv
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
-	"os"
 	"path"
 	"runtime/debug"
+	"slices"
+	"strings"
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
@@ -21,14 +23,36 @@ import (
 )
 
 type Options struct {
-	SchemaPath       string
-	EntPackagePath   string
-	IDType           string
-	ProtoFile        string
-	ConvPackage      string
-	ProtoPackagePath string
-	ProtoAlias       string
-	OutDir           string
+	SchemaPath         string
+	EntPackagePath     string
+	IDType             string
+	ProtoFile          string
+	ConvPackage        string
+	ProtoPackagePath   string
+	ProtoAlias         string
+	OutDir             string
+	MissingProtoPolicy MissingProtoPolicy
+	WarningHandler     func(error)
+}
+
+type MissingProtoPolicy string
+
+const (
+	MissingProtoPolicyStrict MissingProtoPolicy = "strict"
+	MissingProtoPolicyWarn   MissingProtoPolicy = "warn"
+)
+
+type MissingProtoMessagesError struct {
+	Missing []string
+}
+
+func (e *MissingProtoMessagesError) Error() string {
+	return fmt.Sprintf("missing proto messages for ent types: %s", strings.Join(e.Missing, ", "))
+}
+
+func (e *MissingProtoMessagesError) Is(target error) bool {
+	var t *MissingProtoMessagesError
+	return errors.As(target, &t)
 }
 
 type Option func(*Options)
@@ -36,14 +60,15 @@ type Option func(*Options)
 func DefaultOptions() *Options {
 	modulePath := currentModulePath()
 	return &Options{
-		IDType:           "int64",
-		SchemaPath:       "./internal/pkg/database/schema",
-		EntPackagePath:   path.Join(modulePath, "/internal/pkg/database/ent"),
-		ProtoFile:        "./api/entpb/entpb.pb.go",
-		ConvPackage:      "entmap",
-		ProtoPackagePath: path.Join(modulePath, "/api/entpb"),
-		ProtoAlias:       "entpb",
-		OutDir:           "./internal/pkg/render/entmap",
+		IDType:             "int64",
+		SchemaPath:         "./internal/pkg/database/schema",
+		EntPackagePath:     path.Join(modulePath, "/internal/pkg/database/ent"),
+		ProtoFile:          "./api/entpb/entpb.pb.go",
+		ConvPackage:        "entmap",
+		ProtoPackagePath:   path.Join(modulePath, "/api/entpb"),
+		ProtoAlias:         "entpb",
+		OutDir:             "./internal/pkg/render/entmap",
+		MissingProtoPolicy: MissingProtoPolicyStrict,
 	}
 }
 
@@ -102,6 +127,18 @@ func WithProtoAlias(v string) Option {
 func WithOutDir(v string) Option {
 	return func(o *Options) {
 		o.OutDir = v
+	}
+}
+
+func WithMissingProtoPolicy(v MissingProtoPolicy) Option {
+	return func(o *Options) {
+		o.MissingProtoPolicy = v
+	}
+}
+
+func WithWarningHandler(h func(error)) Option {
+	return func(o *Options) {
+		o.WarningHandler = h
 	}
 }
 
@@ -174,7 +211,18 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 		return nil, fmt.Errorf("parsing proto file: %w", err)
 	}
 
-	typesToGenerate := matchTypes(g, protoTypes)
+	typesToGenerate, missing := matchTypes(g, protoTypes)
+	if missing != nil {
+		switch normalizePolicy(opts.MissingProtoPolicy) {
+		case MissingProtoPolicyWarn:
+			if opts.WarningHandler != nil {
+				opts.WarningHandler(missing)
+			}
+		default:
+			return nil, missing
+		}
+	}
+
 	if len(typesToGenerate) == 0 {
 		return nil, fmt.Errorf("no matching types found between ent schema and proto messages")
 	}
@@ -224,13 +272,14 @@ func loadAdapter(g *gen.Graph) (*entproto.Adapter, error) {
 	return entproto.LoadAdapter(g)
 }
 
-func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) []generator.TypeInfo {
+func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) ([]generator.TypeInfo, *MissingProtoMessagesError) {
 	var typesToGenerate []generator.TypeInfo
+	missing := make([]string, 0)
 
 	for _, node := range g.Nodes {
 		protoType, ok := protoTypes[node.Name]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "warning: proto message %q not found for ent type %q, skipping\n", node.Name, node.Name)
+			missing = append(missing, node.Name)
 			continue
 		}
 
@@ -240,8 +289,11 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) []g
 			Type:        node,
 		})
 	}
-
-	return typesToGenerate
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		return typesToGenerate, &MissingProtoMessagesError{Missing: missing}
+	}
+	return typesToGenerate, nil
 }
 
 func parseProtoFile(filePath string) (map[string]*generator.ProtoMessage, error) {
@@ -348,5 +400,15 @@ func validateOptions(opts *Options) error {
 	if opts.OutDir == "" {
 		return &RequiredOptionError{Field: "OutDir"}
 	}
+	if p := normalizePolicy(opts.MissingProtoPolicy); p != MissingProtoPolicyStrict && p != MissingProtoPolicyWarn {
+		return fmt.Errorf("invalid MissingProtoPolicy %q", opts.MissingProtoPolicy)
+	}
 	return nil
+}
+
+func normalizePolicy(v MissingProtoPolicy) MissingProtoPolicy {
+	if v == "" {
+		return MissingProtoPolicyStrict
+	}
+	return MissingProtoPolicy(strings.ToLower(string(v)))
 }
