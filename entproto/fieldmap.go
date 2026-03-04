@@ -130,6 +130,16 @@ func (d *FieldMappingDescriptor) EdgeIDPbStructFieldDesc() *desc.FieldDescriptor
 }
 
 func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (FieldMap, error) {
+	fieldByName := make(map[string]*gen.Field, len(entType.Fields)+1)
+	fieldByName[entType.ID.Name] = entType.ID
+	for _, fld := range entType.Fields {
+		fieldByName[fld.Name] = fld
+	}
+	edgeByName := make(map[string]*gen.Edge, len(entType.Edges))
+	for _, edg := range entType.Edges {
+		edgeByName[edg.Name] = edg
+	}
+
 	m := make(map[string]*FieldMappingDescriptor)
 	for _, fld := range pbType.GetFields() {
 		fd := &FieldMappingDescriptor{
@@ -137,17 +147,9 @@ func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (
 			IsIDField:         pascal(fld.GetName()) == pascal(entType.ID.Name),
 			IsEnumField:       fld.GetEnumType() != nil,
 		}
-		for _, edg := range entType.Edges {
-			if fld.GetName() == edg.Name {
-				fd.IsEdgeField = true
-				break
-			}
-		}
-		if fd.IsEdgeField {
-			edg, err := extractEntEdgeByName(entType, fld.GetName())
-			if err != nil {
-				return nil, err
-			}
+		edg, isEdge := edgeByName[fld.GetName()]
+		if isEdge {
+			fd.IsEdgeField = true
 			fd.EntEdge = edg
 			referenced, err := a.GetMessageDescriptor(edg.Type.Name)
 			if err != nil {
@@ -155,9 +157,9 @@ func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (
 			}
 			fd.ReferencedPbType = referenced
 		} else {
-			enf, err := extractEntFieldByName(entType, fld.GetName())
-			if err != nil {
-				return nil, err
+			enf, ok := fieldByName[fld.GetName()]
+			if !ok {
+				return nil, fmt.Errorf("entproto: could not find field %q in %q", fld.GetName(), entType.Name)
 			}
 			fd.EntField = enf
 		}
@@ -194,7 +196,7 @@ func isASCIILower(c byte) bool {
 
 // Is c an ASCII digit?
 func isASCIIDigit(c byte) bool {
-	return '0' <= c && c <= 'z'
+	return '0' <= c && c <= '9'
 }
 
 // camelCase was copied from https://github.com/golang/protobuf/blob/v1.5.2/protoc-gen-go/generator/generator.go#L2648

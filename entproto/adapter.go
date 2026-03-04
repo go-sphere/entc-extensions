@@ -29,9 +29,14 @@ var (
 func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 	a := &Adapter{
 		graph:            graph,
+		nodeByName:       make(map[string]*gen.Type, len(graph.Nodes)),
+		protoPkgByType:   make(map[string]string, len(graph.Nodes)),
 		descriptors:      make(map[string]*desc.FileDescriptor),
 		schemaProtoFiles: make(map[string]string),
 		errors:           make(map[string]error),
+	}
+	for _, node := range graph.Nodes {
+		a.nodeByName[node.Name] = node
 	}
 	if err := a.parse(); err != nil {
 		return nil, err
@@ -42,6 +47,8 @@ func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 // Adapter facilitates the transformation of ent gen.Type to desc.FileDescriptors
 type Adapter struct {
 	graph            *gen.Graph
+	nodeByName       map[string]*gen.Type
+	protoPkgByType   map[string]string
 	descriptors      map[string]*desc.FileDescriptor
 	schemaProtoFiles map[string]string
 	errors           map[string]error
@@ -72,6 +79,7 @@ func (a *Adapter) parse() error {
 	var dpbDescriptors []*descriptorpb.FileDescriptorProto
 
 	protoPackages := make(map[string]*descriptorpb.FileDescriptorProto)
+	protoPackageDeps := make(map[string]map[string]struct{})
 
 	for _, genType := range a.graph.Nodes {
 		messageDescriptor, err := a.toProtoMessageDescriptor(genType)
@@ -82,7 +90,7 @@ func (a *Adapter) parse() error {
 			continue
 		}
 
-		protoPkg, err := protoPackageName(genType)
+		protoPkg, err := a.protoPackageName(genType)
 		if err != nil {
 			a.errors[genType.Name] = err
 			continue
@@ -98,31 +106,27 @@ func (a *Adapter) parse() error {
 					GoPackage: &goPkg,
 				},
 			}
+			protoPackageDeps[protoPkg] = make(map[string]struct{})
 		}
 		fd := protoPackages[protoPkg]
 		fd.MessageType = append(fd.MessageType, messageDescriptor)
 		a.schemaProtoFiles[genType.Name] = *fd.Name
 
-		depPaths, err := a.extractDepPaths(messageDescriptor)
+		depPaths, err := a.extractDepPaths(protoPkg, messageDescriptor)
 		if err != nil {
 			a.errors[genType.Name] = err
 			continue
 		}
-		fd.Dependency = append(fd.Dependency, depPaths...)
+		for _, depPath := range depPaths {
+			if _, seen := protoPackageDeps[protoPkg][depPath]; seen {
+				continue
+			}
+			protoPackageDeps[protoPkg][depPath] = struct{}{}
+			fd.Dependency = append(fd.Dependency, depPath)
+		}
 	}
 
 	for _, fd := range protoPackages {
-		// Dedupe dependencies
-		deps := fd.Dependency
-		seen := make(map[string]struct{})
-		var deduped []string
-		for _, d := range deps {
-			if _, ok := seen[d]; !ok {
-				seen[d] = struct{}{}
-				deduped = append(deduped, d)
-			}
-		}
-		fd.Dependency = deduped
 		dpbDescriptors = append(dpbDescriptors, fd)
 	}
 
@@ -189,6 +193,18 @@ func protoPackageName(genType *gen.Type) (string, error) {
 	return DefaultProtoPackageName, nil
 }
 
+func (a *Adapter) protoPackageName(genType *gen.Type) (string, error) {
+	if pkg, ok := a.protoPkgByType[genType.Name]; ok {
+		return pkg, nil
+	}
+	pkg, err := protoPackageName(genType)
+	if err != nil {
+		return "", err
+	}
+	a.protoPkgByType[genType.Name] = pkg
+	return pkg, nil
+}
+
 func relFileName(packageName string) *string {
 	parts := strings.Split(packageName, ".")
 	fileName := parts[len(parts)-1] + ".proto"
@@ -197,34 +213,33 @@ func relFileName(packageName string) *string {
 	return &joined
 }
 
-func (a *Adapter) extractDepPaths(m *descriptorpb.DescriptorProto) ([]string, error) {
+func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.DescriptorProto) ([]string, error) {
 	var out []string
 	for _, fld := range m.Field {
-		if *fld.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE { //nolint
-			fieldTypeName := *fld.TypeName
-			// Check if the field type is a dependency in the graph
-			parts := strings.Split(fieldTypeName, ".")
-			name := parts[len(parts)-1]
-			depType, err := extractGenTypeByName(a.graph, name)
-			if err != nil {
-				return nil, fmt.Errorf("entproto: failed extracting deps, unknown path for %s", fieldTypeName)
-			}
-			depPackageName, err := protoPackageName(depType)
-			if err != nil {
-				return nil, err
-			}
-			selfType, err := extractGenTypeByName(a.graph, *m.Name)
-			if err != nil {
-				return nil, err
-			}
-			selfPackageName, _ := protoPackageName(selfType)
-			if depPackageName != selfPackageName {
-				importPath := relFileName(depPackageName)
-				out = append(out, *importPath)
-			}
+		if fld.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			continue
+		}
+		fieldTypeName := fld.GetTypeName()
+		depTypeName := protoTypeShortName(fieldTypeName)
+		depType, ok := a.nodeByName[depTypeName]
+		if !ok {
+			return nil, fmt.Errorf("entproto: failed extracting deps, unknown path for %s", fieldTypeName)
+		}
+		depPackageName, err := a.protoPackageName(depType)
+		if err != nil {
+			return nil, err
+		}
+		if depPackageName != selfPackageName {
+			importPath := relFileName(depPackageName)
+			out = append(out, *importPath)
 		}
 	}
 	return out, nil
+}
+
+func protoTypeShortName(typeName string) string {
+	parts := strings.Split(typeName, ".")
+	return parts[len(parts)-1]
 }
 
 func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.DescriptorProto, error) {
@@ -238,7 +253,12 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 	}
 
 	if !genType.ID.UserDefined {
-		genType.ID.Annotations = map[string]any{FieldAnnotation: Field(IDFieldNumber)}
+		if genType.ID.Annotations == nil {
+			genType.ID.Annotations = make(map[string]any, 1)
+		}
+		if _, exists := genType.ID.Annotations[FieldAnnotation]; !exists {
+			genType.ID.Annotations[FieldAnnotation] = Field(IDFieldNumber)
+		}
 	}
 
 	all := []*gen.Field{genType.ID}
@@ -318,9 +338,9 @@ func (a *Adapter) extractEdgeFieldDescriptor(source *gen.Type, e *gen.Edge) (*de
 		fieldDesc.Label = &repeatedFieldLabel
 	}
 
-	relType, err := extractGenTypeByName(a.graph, msgTypeName)
-	if err != nil {
-		return nil, err
+	relType, ok := a.nodeByName[msgTypeName]
+	if !ok {
+		return nil, fmt.Errorf("entproto: could not find schema %q in graph", msgTypeName)
 	}
 	dstAnnotation, err := extractMessageAnnotation(relType)
 	if err != nil || !dstAnnotation.Generate {
