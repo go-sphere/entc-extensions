@@ -2,6 +2,7 @@ MODULE := $(shell go list -m)
 
 LINT_DIRS := entconv entcrud entproto testdata
 VERIFY_DIRS := entproto entconv entcrud
+TAG_MODULES := entconv entcrud entproto
 
 .PHONY: lint-all
 lint-all:
@@ -49,19 +50,19 @@ tag:
 tag-all:
 	@test -n "$(TAG)" || (echo "TAG is required: make tag-all TAG=v0.0.1" && exit 1)
 	@set -e; \
-	for adapter in $(TAG_ADAPTERS); do \
-		git tag -s $$adapter/$(TAG) -m "$$adapter/$(TAG)"; \
+	for tag in $(TAG) $(addsuffix /$(TAG),$(TAG_MODULES)); do \
+		git tag -d "$$tag" >/dev/null 2>&1 || true; \
+		git push origin --delete "$$tag" >/dev/null 2>&1 || true; \
+		git tag -s "$$tag" -m "$$tag"; \
 	done
 	git push origin --tags
 
 .PHONY: tag-delete
 tag-delete:
 	@test -n "$(TAG)" || (echo "TAG is required: make tag-delete TAG=v0.0.1" && exit 1)
-	-git tag -d $(TAG)
-	@for adapter in $(TAG_ADAPTERS); do \
-		git tag -d $$adapter/$(TAG) || true; \
+	@for tag in $(TAG) $(addsuffix /$(TAG),$(TAG_MODULES)); do \
+		git tag -d "$$tag" || true; \
 	done
-	-git push origin --delete $(TAG)
-	@for adapter in $(TAG_ADAPTERS); do \
-		git push origin --delete $$adapter/$(TAG) || true; \
+	@for tag in $(TAG) $(addsuffix /$(TAG),$(TAG_MODULES)); do \
+		git push origin --delete "$$tag" || true; \
 	done
