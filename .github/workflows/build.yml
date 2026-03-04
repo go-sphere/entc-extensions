@@ -22,8 +22,8 @@ jobs:
         go-version: ${{ matrix.go-version }}
     - name: Install testdata tooling
       run: cd testdata && make init
-    - name: Verify
-      run: make verify
+    - name: Test
+      run: make test
 
   regen-check:
     runs-on: ubuntu-latest
