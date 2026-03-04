@@ -8,6 +8,8 @@ init:
 
 
 test:
+	rm -r internal/pkg/database/ent/*
+	rm -r internal/pkg/render/*
 	go run ./cmd/entproto
 	buf generate
 	go run ./cmd/entconv

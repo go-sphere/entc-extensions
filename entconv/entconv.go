@@ -8,6 +8,8 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
+	"runtime/debug"
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
@@ -29,6 +31,80 @@ type Options struct {
 	OutDir           string
 }
 
+type Option func(*Options)
+
+func DefaultOptions() *Options {
+	modulePath := currentModulePath()
+	return &Options{
+		IDType:           "int64",
+		SchemaPath:       "./internal/pkg/database/schema",
+		EntPackagePath:   path.Join(modulePath, "/internal/pkg/database/ent"),
+		ProtoFile:        "./api/entpb/entpb.pb.go",
+		ConvPackage:      "entmap",
+		ProtoPackagePath: path.Join(modulePath, "/api/entpb"),
+		ProtoAlias:       "entpb",
+		OutDir:           "./internal/pkg/render/entmap",
+	}
+}
+
+func NewOptions(opts ...Option) *Options {
+	o := DefaultOptions()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(o)
+		}
+	}
+	return o
+}
+
+func WithSchemaPath(v string) Option {
+	return func(o *Options) {
+		o.SchemaPath = v
+	}
+}
+
+func WithEntPackagePath(v string) Option {
+	return func(o *Options) {
+		o.EntPackagePath = v
+	}
+}
+
+func WithIDType(v string) Option {
+	return func(o *Options) {
+		o.IDType = v
+	}
+}
+
+func WithProtoFile(v string) Option {
+	return func(o *Options) {
+		o.ProtoFile = v
+	}
+}
+
+func WithConvPackage(v string) Option {
+	return func(o *Options) {
+		o.ConvPackage = v
+	}
+}
+
+func WithProtoPackagePath(v string) Option {
+	return func(o *Options) {
+		o.ProtoPackagePath = v
+	}
+}
+
+func WithProtoAlias(v string) Option {
+	return func(o *Options) {
+		o.ProtoAlias = v
+	}
+}
+
+func WithOutDir(v string) Option {
+	return func(o *Options) {
+		o.OutDir = v
+	}
+}
+
 type RequiredOptionError struct {
 	Field string
 }
@@ -38,6 +114,46 @@ func (e *RequiredOptionError) Error() string {
 }
 
 func GenerateConverter(opts *Options) ([]byte, error) {
+	cg, err := prepareGenerator(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	if err := cg.GenerateToWriter(&buf); err != nil {
+		return nil, fmt.Errorf("generating code: %w", err)
+	}
+
+	formatted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("formatting source: %w", err)
+	}
+
+	imported, err := imports.Process("", formatted, nil)
+	if err != nil {
+		return nil, fmt.Errorf("running goimports: %w", err)
+	}
+
+	return imported, nil
+}
+
+func GenerateConverterWithOptions(opts ...Option) ([]byte, error) {
+	return GenerateConverter(NewOptions(opts...))
+}
+
+func GenerateConverterFile(opts *Options) error {
+	cg, err := prepareGenerator(opts)
+	if err != nil {
+		return err
+	}
+	return cg.GenerateAll(opts.OutDir)
+}
+
+func GenerateConverterFileWithOptions(opts ...Option) error {
+	return GenerateConverterFile(NewOptions(opts...))
+}
+
+func prepareGenerator(opts *Options) (*generator.Generator, error) {
 	if err := validateOptions(opts); err != nil {
 		return nil, err
 	}
@@ -68,74 +184,33 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 		return nil, fmt.Errorf("loading adapter: %w", err)
 	}
 
-	var protoAlias string
-	if opts.ProtoPackagePath != "" {
-		protoAlias = opts.ProtoAlias
-		if protoAlias == "" {
-			protoAlias = opts.ConvPackage
-		}
-	}
-	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
-
-	var buf bytes.Buffer
-	if err := cg.GenerateToWriter(&buf); err != nil {
-		return nil, fmt.Errorf("generating code: %w", err)
-	}
-
-	formatted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("formatting source: %w", err)
-	}
-
-	imported, err := imports.Process("", formatted, nil)
-	if err != nil {
-		return nil, fmt.Errorf("running goimports: %w", err)
-	}
-
-	return imported, nil
+	return generator.New(
+		entPkg,
+		opts.ConvPackage,
+		opts.ProtoPackagePath,
+		resolveProtoAlias(opts),
+		typesToGenerate,
+		adapter,
+		g,
+	), nil
 }
 
-func GenerateConverterFile(opts *Options) error {
-	if err := validateOptions(opts); err != nil {
-		return err
+func currentModulePath() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
 	}
+	return info.Main.Path
+}
 
-	entPkg, err := pkgutil.ResolveEntPackage(opts.SchemaPath, opts.EntPackagePath)
-	if err != nil {
-		return fmt.Errorf("resolving ent package: %w", err)
+func resolveProtoAlias(opts *Options) string {
+	if opts.ProtoPackagePath == "" {
+		return ""
 	}
-
-	idType := parseIDType(opts.IDType)
-	g, err := loadEntGraph(opts.SchemaPath, entPkg, idType)
-	if err != nil {
-		return fmt.Errorf("loading ent graph: %w", err)
+	if opts.ProtoAlias != "" {
+		return opts.ProtoAlias
 	}
-
-	protoTypes, err := parseProtoFile(opts.ProtoFile)
-	if err != nil {
-		return fmt.Errorf("parsing proto file: %w", err)
-	}
-
-	typesToGenerate := matchTypes(g, protoTypes)
-	if len(typesToGenerate) == 0 {
-		return fmt.Errorf("no matching types found between ent schema and proto messages")
-	}
-
-	adapter, err := loadAdapter(g)
-	if err != nil {
-		return fmt.Errorf("loading adapter: %w", err)
-	}
-
-	var protoAlias string
-	if opts.ProtoPackagePath != "" {
-		protoAlias = opts.ProtoAlias
-		if protoAlias == "" {
-			protoAlias = opts.ConvPackage
-		}
-	}
-
-	cg := generator.New(entPkg, opts.ConvPackage, opts.ProtoPackagePath, protoAlias, typesToGenerate, adapter, g)
-	return cg.GenerateAll(opts.OutDir)
+	return opts.ConvPackage
 }
 
 func loadEntGraph(schemaPath, entPackage string, idType *field.TypeInfo) (*gen.Graph, error) {

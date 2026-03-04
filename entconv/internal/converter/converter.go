@@ -88,15 +88,13 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 	case implements(efld.Type.RType, binaryMarshallerUnmarshalerType) && efld.HasGoType():
 		// Ident returned from ent already has the packagename prefixed. Strip it since `g.QualifiedGoIdent`
 		// adds it back.
-		split := strings.Split(efld.Type.Ident, ".")
-		out.ToEntMarshallerConstructor = split[1]
+		out.ToEntMarshallerConstructor = constructorName(efld.Type.Ident)
 	case efld.Type.ValueScanner():
 		switch {
 		case efld.HasGoType():
 			// Ident returned from ent already has the packagename prefixed. Strip it since `g.QualifiedGoIdent`
 			// adds it back.
-			split := strings.Split(efld.Type.Ident, ".")
-			out.ToEntScannerConstructor = split[1]
+			out.ToEntScannerConstructor = constructorName(efld.Type.Ident)
 		case efld.IsBool():
 			out.ToEntScannerConversion = "bool"
 		case efld.IsBytes():
@@ -145,8 +143,7 @@ func basicTypeConversion(md *desc.FieldDescriptor, entField *gen.Field, conv *Co
 		if implements(entField.Type.RType, binaryMarshallerUnmarshalerType) {
 			// Ident returned from ent already has the packagename prefixed. Strip it since `g.QualifiedGoIdent`
 			// adds it back.
-			split := strings.Split(entField.Type.Ident, ".")
-			conv.ToProtoMarshallerConstructor = split[1]
+			conv.ToProtoMarshallerConstructor = constructorName(entField.Type.Ident)
 		} else if entField.Type.Valuer() {
 			conv.ToProtoValuer = "[]byte"
 		}
@@ -205,4 +202,11 @@ func implements(r *field.RType, typ reflect.Type) bool {
 		}
 	}
 	return true
+}
+
+func constructorName(ident string) string {
+	if idx := strings.LastIndex(ident, "."); idx >= 0 && idx+1 < len(ident) {
+		return ident[idx+1:]
+	}
+	return ident
 }

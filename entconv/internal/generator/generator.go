@@ -20,11 +20,11 @@ import (
 	"golang.org/x/tools/imports"
 )
 
-// templateCache holds the parsed templates to avoid re-parsing on each generation.
+// templateSource caches the embedded template text to avoid repeated file I/O.
 var (
-	templateCache     *gen.Template
-	templateCacheOnce sync.Once
-	templateCacheErr  error
+	templateSource     string
+	templateSourceOnce sync.Once
+	templateSourceErr  error
 )
 
 // ProtoMessage represents a parsed proto message from .pb.go file.
@@ -57,8 +57,6 @@ type Generator struct {
 	Types      []TypeInfo
 	Adapter    *entproto.Adapter
 	Graph      *gen.Graph
-	// currentType is the type being generated in single-type mode
-	currentType *TypeInfo
 	// nodeIndex provides O(1) lookup for node names
 	nodeIndex map[string]*gen.Type
 	// typeIndex provides O(1) lookup for type info by name
@@ -95,21 +93,28 @@ func New(entPackage, pkg, pkgPath, protoAlias string, types []TypeInfo, adapter 
 //go:embed template/*
 var templates embed.FS
 
-// getTemplate returns the parsed template, using a cached version if available.
+// getTemplate parses a template bound to the current generator's function map.
 func (g *Generator) getTemplate() (*gen.Template, error) {
-	templateCacheOnce.Do(func() {
+	templateSourceOnce.Do(func() {
 		tmplContent, err := fs.ReadFile(templates, "template/converter.tmpl")
 		if err != nil {
-			templateCacheErr = fmt.Errorf("failed to read template: %w", err)
+			templateSourceErr = fmt.Errorf("failed to read template: %w", err)
 			return
 		}
-
-		templateCache, templateCacheErr = gen.NewTemplate("converter").
-			Funcs(g.templateFuncs()).
-			Parse(string(tmplContent))
+		templateSource = string(tmplContent)
 	})
 
-	return templateCache, templateCacheErr
+	if templateSourceErr != nil {
+		return nil, templateSourceErr
+	}
+
+	tmpl, err := gen.NewTemplate("converter").
+		Funcs(g.templateFuncs()).
+		Parse(templateSource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template: %w", err)
+	}
+	return tmpl, nil
 }
 
 // Generate produces the converter code and writes to the specified output path.
@@ -129,7 +134,6 @@ func (g *Generator) GenerateAll(outputDir string) error {
 	}
 
 	for _, typeInfo := range g.Types {
-		g.currentType = &typeInfo
 		var buf bytes.Buffer
 		if err := g.generateSingleType(&buf, typeInfo); err != nil {
 			return fmt.Errorf("generating %s: %w", typeInfo.Type.Name, err)
@@ -172,7 +176,6 @@ func (g *Generator) generateSingleType(w io.Writer, typeInfo TypeInfo) error {
 		Types:            []TypeInfo{typeInfo},
 		Adapter:          g.Adapter,
 		Graph:            g.Graph,
-		currentType:      &typeInfo,
 		nodeIndex:        g.nodeIndex,
 		typeIndex:        g.typeIndex,
 	}
