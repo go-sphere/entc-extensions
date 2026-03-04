@@ -52,6 +52,9 @@ func TestEntconvRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("[entconv] ToEntUser failed: %v", err)
 	}
+	if pbUser == nil || backUser == nil {
+		t.Fatalf("[entconv] unexpected nil user conversion result: pb=%v back=%v", pbUser, backUser)
+	}
 
 	if backUser.ID != entUser.ID || backUser.Name != entUser.Name || backUser.Age != entUser.Age {
 		t.Fatalf("[entconv] user round-trip mismatch: %+v -> %+v", entUser, backUser)
@@ -84,6 +87,9 @@ func TestEntconvRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("[entconv] ToEntPost failed: %v", err)
 	}
+	if pbPost == nil || backPost == nil {
+		t.Fatalf("[entconv] unexpected nil post conversion result: pb=%v back=%v", pbPost, backPost)
+	}
 
 	if backPost.Status != entPost.Status || backPost.Title != entPost.Title {
 		t.Fatalf("[entconv] post round-trip mismatch: %+v -> %+v", entPost, backPost)
@@ -108,6 +114,9 @@ func TestEntconvRoundTrip(t *testing.T) {
 	backGroup, err := entmap.ToEntGroup(pbGroup)
 	if err != nil {
 		t.Fatalf("[entconv] ToEntGroup failed: %v", err)
+	}
+	if pbGroup == nil || backGroup == nil {
+		t.Fatalf("[entconv] unexpected nil group conversion result: pb=%v back=%v", pbGroup, backGroup)
 	}
 	if backGroup.Name != entGroup.Name || len(backGroup.Labels) != len(entGroup.Labels) {
 		t.Fatalf("[entconv] group round-trip mismatch: %+v -> %+v", entGroup, backGroup)

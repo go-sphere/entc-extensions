@@ -1,7 +1,6 @@
 MODULE := $(shell go list -m)
 
 LINT_DIRS := entconv entcrud entproto testdata
-NILAWAY_DIRS := entconv entcrud entproto
 VERIFY_DIRS := entproto entconv entcrud
 
 .PHONY: lint-all
@@ -17,9 +16,7 @@ lint-all:
 		go mod tidy; \
 		golangci-lint fmt --no-config --enable gofmt,goimports; \
 		golangci-lint run --no-config --fix; \
-		if echo " $(NILAWAY_DIRS) " | grep -q " $$dir "; then \
-			nilaway ./...; \
-		fi; \
+		nilaway -exclude-errors-in-files internal/pkg/database/ent/enttest/enttest.go ./...; \
 		cd - >/dev/null; \
 	done
 
@@ -41,3 +38,30 @@ regen:
 test:
 	$(MAKE) regen
 	$(MAKE) verify
+
+.PHONY: tag
+tag:
+	@test -n "$(TAG)" || (echo "TAG is required: make tag TAG=v0.0.1" && exit 1)
+	git tag -s $(TAG) -m "$(TAG)"
+	git push origin --tags
+
+.PHONY: tag-all
+tag-all:
+	@test -n "$(TAG)" || (echo "TAG is required: make tag-all TAG=v0.0.1" && exit 1)
+	@set -e; \
+	for adapter in $(TAG_ADAPTERS); do \
+		git tag -s $$adapter/$(TAG) -m "$$adapter/$(TAG)"; \
+	done
+	git push origin --tags
+
+.PHONY: tag-delete
+tag-delete:
+	@test -n "$(TAG)" || (echo "TAG is required: make tag-delete TAG=v0.0.1" && exit 1)
+	-git tag -d $(TAG)
+	@for adapter in $(TAG_ADAPTERS); do \
+		git tag -d $$adapter/$(TAG) || true; \
+	done
+	-git push origin --delete $(TAG)
+	@for adapter in $(TAG_ADAPTERS); do \
+		git push origin --delete $$adapter/$(TAG) || true; \
+	done
