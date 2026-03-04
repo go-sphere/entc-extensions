@@ -1,2 +1,4 @@
-internal/converter/
+#internal/pkg/render/
 internal/pkg/database/ent/
+api/
+proto/

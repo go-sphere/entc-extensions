@@ -1,15 +1,20 @@
 .PHONY: init clean-generated generate-entproto generate-entconv generate-entcrud generate-all verify-entproto verify-entconv verify-entcrud verify-e2e verify-generated test
 
 init:
-	go install github.com/bufbuild/buf/cmd/buf@latest
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install github.com/bufbuild/buf/cmd/buf@v1.59.0
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+
+.PHONY: deps-update
+deps-update:
 	buf dep update
 	buf dep prune
 
 clean-generated:
-	rm -r api/*
-	rm -r internal/pkg/database/ent/*
-	rm -r internal/pkg/render/*
+	rm -rf api/entpb
+	rm -rf proto/entpb
+	rm -rf internal/pkg/database/ent
+	rm -rf internal/pkg/render/entbind
+	rm -rf internal/pkg/render/entmap
 
 generate-entproto:
 	@echo "[entproto] generate ent + proto definitions"
