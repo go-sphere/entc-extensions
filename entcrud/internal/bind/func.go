@@ -2,9 +2,9 @@ package bind
 
 import (
 	_ "embed"
-	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/go-sphere/entc-extensions/entcrud/conf"
@@ -14,6 +14,24 @@ import (
 
 //go:embed func.tmpl
 var genBindFuncTemplate string
+
+var (
+	bindTemplateOnce sync.Once
+	bindTemplate     *template.Template
+	bindTemplateErr  error
+)
+
+func getBindTemplate() (*template.Template, error) {
+	bindTemplateOnce.Do(func() {
+		bindTemplate, bindTemplateErr = template.New("bind").Funcs(template.FuncMap{
+			"GenZeroCheck":          inspect.GenerateZeroCheckExpr,
+			"GenNotZeroCheck":       inspect.GenerateNonZeroCheckExpr,
+			"GenTypeConversionExpr": inspect.GenerateTypeConversionExpr,
+			"ToSnakeCase":           strcase.ToSnake,
+		}).Parse(genBindFuncTemplate)
+	})
+	return bindTemplate, bindTemplateErr
+}
 
 // GenBindFunc generates Go code for binding functions.
 func GenBindFunc(action any, conf *conf.EntityConf, customConverters map[string]any) (string, error) {
@@ -26,80 +44,9 @@ func GenBindFunc(action any, conf *conf.EntityConf, customConverters map[string]
 	_, targetFields := inspect.ExtractPublicFields(conf.Target, strcase.ToSnake)
 	_, actionMethods := inspect.ExtractPublicMethods(action, strcase.ToSnake)
 
-	ignoreFields := make(map[string]bool, len(conf.IgnoreFields))
-	for _, field := range conf.IgnoreFields {
-		ignoreFields[strings.ToLower(field)] = true
-	}
-	table := strings.ToLower(inspect.TypeName(conf.Source))
-
-	fields := make([]fieldContext, 0, len(keys))
-	for _, n := range keys {
-		if ignoreFields[n] {
-			continue
-		}
-		sourceField, ok := sourceFields[n]
-		if !ok {
-			continue
-		}
-		targetField, ok := targetFields[n]
-		if !ok {
-			continue
-		}
-
-		setter, hasSetter := actionMethods[strcase.ToSnake(fmt.Sprintf("Set%s", sourceField.Name))]
-		if !hasSetter {
-			continue
-		}
-
-		settNillable, hasSettNillable := actionMethods[strcase.ToSnake(fmt.Sprintf("SetNillable%s", sourceField.Name))]
-		clearOnNil, hasClearOnNil := actionMethods[strcase.ToSnake(fmt.Sprintf("Clear%s", sourceField.Name))]
-		targetFieldIsPtr := targetField.Type.Kind() == reflect.Pointer
-
-		field := fieldContext{
-			FieldKeyPath: fmt.Sprintf("%s.Field%s", table, sourceField.Name),
-
-			TargetField: targetField,
-			SourceField: sourceField,
-
-			SetterFuncName:       setter.Name,
-			SettNillableFuncName: settNillable.Name,
-			ClearOnNilFuncName:   clearOnNil.Name,
-
-			CanSettNillable:        hasSettNillable,
-			CanClearOnNil:          hasClearOnNil,
-			TargetFieldIsPtr:       targetFieldIsPtr,
-			TargetSourceIsSomeType: false,
-		}
-
-		if targetFieldIsPtr {
-			elem := targetField.Type.Elem()
-			field.TargetSourceIsSomeType = elem.Kind() == sourceField.Type.Kind() && elem.String() == sourceField.Type.String()
-		} else {
-			field.TargetSourceIsSomeType = targetField.Type.Kind() == sourceField.Type.Kind() && targetField.Type.String() == sourceField.Type.String()
-		}
-
-		// Check if types are compatible - skip if not
-		if !field.TargetSourceIsSomeType && !targetFieldIsPtr {
-			// Check for incompatible types (e.g., time.Time vs int64)
-			sourceType := sourceField.Type.String()
-			targetType := targetField.Type.String()
-			if (sourceType == "time.Time" && targetType == "int64") ||
-				(sourceType == "int64" && targetType == "time.Time") {
-				field.SkipField = true
-			}
-		}
-
-		// Check for custom converter
-		if customConverters != nil {
-			if converter, ok := customConverters[n]; ok {
-				field.HasCustomConverter = true
-				field.CustomConverter = inspect.GetFuncInfo(converter)
-				field.SkipField = false // Custom converter can handle incompatible types
-			}
-		}
-
-		fields = append(fields, field)
-	}
+	ignoreFields := normalizeIgnoredFields(conf.IgnoreFields)
+	table := strings.ToLower(sourceName)
+	fields := buildFieldContexts(keys, sourceFields, targetFields, actionMethods, table, ignoreFields, customConverters)
 
 	context := bindContext{
 		SourcePkgName: "ent",                                   // Source uses ent package (e.g., ent.ExampleCreate)
@@ -112,12 +59,7 @@ func GenBindFunc(action any, conf *conf.EntityConf, customConverters map[string]
 		Fields:     fields,
 	}
 
-	parse, err := template.New("bind").Funcs(template.FuncMap{
-		"GenZeroCheck":          inspect.GenerateZeroCheckExpr,
-		"GenNotZeroCheck":       inspect.GenerateNonZeroCheckExpr,
-		"GenTypeConversionExpr": inspect.GenerateTypeConversionExpr,
-		"ToSnakeCase":           strcase.ToSnake,
-	}).Parse(genBindFuncTemplate)
+	parse, err := getBindTemplate()
 	if err != nil {
 		return "", err
 	}
@@ -127,6 +69,104 @@ func GenBindFunc(action any, conf *conf.EntityConf, customConverters map[string]
 		return "", err
 	}
 	return builder.String(), nil
+}
+
+func normalizeIgnoredFields(fields []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		result[strings.ToLower(field)] = struct{}{}
+	}
+	return result
+}
+
+func buildFieldContexts(
+	keys []string,
+	sourceFields map[string]reflect.StructField,
+	targetFields map[string]reflect.StructField,
+	actionMethods map[string]reflect.Method,
+	table string,
+	ignoreFields map[string]struct{},
+	customConverters map[string]any,
+) []fieldContext {
+	fields := make([]fieldContext, 0, len(keys))
+	for _, key := range keys {
+		if _, ignored := ignoreFields[key]; ignored {
+			continue
+		}
+		sourceField, ok := sourceFields[key]
+		if !ok {
+			continue
+		}
+		targetField, ok := targetFields[key]
+		if !ok {
+			continue
+		}
+
+		field, ok := buildFieldContext(key, sourceField, targetField, actionMethods, table, customConverters)
+		if !ok {
+			continue
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+func buildFieldContext(
+	key string,
+	sourceField reflect.StructField,
+	targetField reflect.StructField,
+	actionMethods map[string]reflect.Method,
+	table string,
+	customConverters map[string]any,
+) (fieldContext, bool) {
+	setter, hasSetter := actionMethods[strcase.ToSnake("Set"+sourceField.Name)]
+	if !hasSetter {
+		return fieldContext{}, false
+	}
+
+	settNillable, hasSettNillable := actionMethods[strcase.ToSnake("SetNillable"+sourceField.Name)]
+	clearOnNil, hasClearOnNil := actionMethods[strcase.ToSnake("Clear"+sourceField.Name)]
+	targetFieldIsPtr := targetField.Type.Kind() == reflect.Pointer
+
+	field := fieldContext{
+		FieldKeyPath: table + ".Field" + sourceField.Name,
+
+		TargetField: targetField,
+		SourceField: sourceField,
+
+		SetterFuncName:       setter.Name,
+		SettNillableFuncName: settNillable.Name,
+		ClearOnNilFuncName:   clearOnNil.Name,
+
+		CanSettNillable:  hasSettNillable,
+		CanClearOnNil:    hasClearOnNil,
+		TargetFieldIsPtr: targetFieldIsPtr,
+	}
+
+	if targetFieldIsPtr {
+		field.TargetSourceIsSomeType = targetField.Type.Elem().String() == sourceField.Type.String()
+	} else {
+		field.TargetSourceIsSomeType = targetField.Type.String() == sourceField.Type.String()
+	}
+
+	// Skip known incompatible source/target pairs unless a custom converter exists.
+	if !field.TargetSourceIsSomeType && !targetFieldIsPtr &&
+		isKnownIncompatibleTypePair(sourceField.Type.String(), targetField.Type.String()) {
+		field.SkipField = true
+	}
+
+	if converter, ok := customConverters[key]; ok {
+		field.HasCustomConverter = true
+		field.CustomConverter = inspect.GetFuncInfo(converter)
+		field.SkipField = false
+	}
+
+	return field, true
+}
+
+func isKnownIncompatibleTypePair(sourceType, targetType string) bool {
+	return (sourceType == "time.Time" && targetType == "int64") ||
+		(sourceType == "int64" && targetType == "time.Time")
 }
 
 type bindContext struct {

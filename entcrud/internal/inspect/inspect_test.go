@@ -14,6 +14,10 @@ type testStruct struct {
 	Score    float64
 	Tags     []string
 	Metadata map[string]string
+	Flags    [2]bool
+	Nested   struct {
+		Code int
+	}
 }
 
 func TestIndirectValue(t *testing.T) {
@@ -38,8 +42,8 @@ func TestTypeName(t *testing.T) {
 
 func TestExtractPublicFields(t *testing.T) {
 	keys, fields := ExtractPublicFields(testStruct{}, nil)
-	if len(keys) != 7 {
-		t.Errorf("Expected 7 fields, got %d", len(keys))
+	if len(keys) != 9 {
+		t.Errorf("Expected 9 fields, got %d", len(keys))
 	}
 	if _, ok := fields["Name"]; !ok {
 		t.Error("Expected Name field")
@@ -69,6 +73,9 @@ func TestGenerateZeroCheckExpr(t *testing.T) {
 		{reflect.StructField{Name: "Active", Type: reflect.TypeFor[bool]()}, `!source.Active`},
 		{reflect.StructField{Name: "Email", Type: reflect.TypeFor[*string]()}, `source.Email == nil`},
 		{reflect.StructField{Name: "Score", Type: reflect.TypeFor[float64]()}, `source.Score == 0.0`},
+		{reflect.StructField{Name: "Metadata", Type: reflect.TypeFor[map[string]string]()}, `source.Metadata == nil`},
+		{reflect.StructField{Name: "Flags", Type: reflect.TypeFor[[2]bool]()}, `reflect.ValueOf(source.Flags).IsZero()`},
+		{reflect.StructField{Name: "Nested", Type: reflect.TypeFor[struct{ Code int }]()}, `reflect.ValueOf(source.Nested).IsZero()`},
 	}
 
 	for _, tt := range tests {
@@ -89,6 +96,9 @@ func TestGenerateNonZeroCheckExpr(t *testing.T) {
 		{reflect.StructField{Name: "Active", Type: reflect.TypeFor[bool]()}, `source.Active`},
 		{reflect.StructField{Name: "Email", Type: reflect.TypeFor[*string]()}, `source.Email != nil`},
 		{reflect.StructField{Name: "Score", Type: reflect.TypeFor[float64]()}, `source.Score != 0.0`},
+		{reflect.StructField{Name: "Metadata", Type: reflect.TypeFor[map[string]string]()}, `source.Metadata != nil`},
+		{reflect.StructField{Name: "Flags", Type: reflect.TypeFor[[2]bool]()}, `!reflect.ValueOf(source.Flags).IsZero()`},
+		{reflect.StructField{Name: "Nested", Type: reflect.TypeFor[struct{ Code int }]()}, `!reflect.ValueOf(source.Nested).IsZero()`},
 	}
 
 	for _, tt := range tests {

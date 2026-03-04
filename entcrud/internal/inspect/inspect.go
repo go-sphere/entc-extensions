@@ -147,45 +147,59 @@ func ExtractPublicMethods(obj any, keyMapper func(string) string) ([]string, map
 
 // GenerateZeroCheckExpr generates Go code that checks if a struct field contains its zero value.
 func GenerateZeroCheckExpr(sourceName string, field reflect.StructField) string {
-	if field.Type.Kind() == reflect.Pointer {
-		return fmt.Sprintf("%s.%s == nil", sourceName, field.Name)
-	}
-	switch field.Type.Kind() {
-	case reflect.String:
-		return fmt.Sprintf("%s.%s == \"\"", sourceName, field.Name)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return fmt.Sprintf("%s.%s == 0", sourceName, field.Name)
-	case reflect.Float32, reflect.Float64:
-		return fmt.Sprintf("%s.%s == 0.0", sourceName, field.Name)
-	case reflect.Bool:
-		return fmt.Sprintf("!%s.%s", sourceName, field.Name)
-	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
-		return fmt.Sprintf("%s.%s == nil", sourceName, field.Name)
-	default:
-		return fmt.Sprintf("reflect.ValueOf(%s.%s).IsZero()", sourceName, field.Name)
-	}
+	return generateCheckExpr(sourceName, field, true)
 }
 
 // GenerateNonZeroCheckExpr generates Go code that checks if a struct field contains a non-zero value.
 func GenerateNonZeroCheckExpr(sourceName string, field reflect.StructField) string {
-	if field.Type.Kind() == reflect.Pointer {
-		return fmt.Sprintf("%s.%s != nil", sourceName, field.Name)
-	}
+	return generateCheckExpr(sourceName, field, false)
+}
+
+func generateCheckExpr(sourceName string, field reflect.StructField, wantZero bool) string {
+	expr := fmt.Sprintf("%s.%s", sourceName, field.Name)
+
 	switch field.Type.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Interface, reflect.Chan, reflect.Func:
+		if wantZero {
+			return expr + " == nil"
+		}
+		return expr + " != nil"
 	case reflect.String:
-		return fmt.Sprintf("%s.%s != \"\"", sourceName, field.Name)
+		if wantZero {
+			return expr + ` == ""`
+		}
+		return expr + ` != ""`
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return fmt.Sprintf("%s.%s != 0", sourceName, field.Name)
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		if wantZero {
+			return expr + " == 0"
+		}
+		return expr + " != 0"
 	case reflect.Float32, reflect.Float64:
-		return fmt.Sprintf("%s.%s != 0.0", sourceName, field.Name)
+		if wantZero {
+			return expr + " == 0.0"
+		}
+		return expr + " != 0.0"
+	case reflect.Complex64, reflect.Complex128:
+		if wantZero {
+			return expr + " == 0"
+		}
+		return expr + " != 0"
 	case reflect.Bool:
-		return fmt.Sprintf("%s.%s", sourceName, field.Name)
-	case reflect.Slice, reflect.Array, reflect.Map, reflect.Struct:
-		return fmt.Sprintf("%s.%s != nil", sourceName, field.Name)
+		if wantZero {
+			return "!" + expr
+		}
+		return expr
+	case reflect.Array, reflect.Struct:
+		if wantZero {
+			return fmt.Sprintf("reflect.ValueOf(%s).IsZero()", expr)
+		}
+		return fmt.Sprintf("!reflect.ValueOf(%s).IsZero()", expr)
 	default:
-		return fmt.Sprintf("!reflect.ValueOf(%s.%s).IsZero()", sourceName, field.Name)
+		if wantZero {
+			return fmt.Sprintf("reflect.ValueOf(%s).IsZero()", expr)
+		}
+		return fmt.Sprintf("!reflect.ValueOf(%s).IsZero()", expr)
 	}
 }
 
