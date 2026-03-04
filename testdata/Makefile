@@ -17,13 +17,13 @@ clean:
 
 generate: clean
 	@echo "[generate] entproto"
-	go run ./cmd/entproto
+	go run -mod=mod ./cmd/entproto
 	@echo "[generate] buf/protoc-gen-go"
 	buf generate
 	@echo "[generate] entconv"
-	go run ./cmd/entconv
+	go run -mod=mod ./cmd/entconv
 	@echo "[generate] entcrud"
-	go run ./cmd/entcrud
+	go run -mod=mod ./cmd/entcrud
 	@echo "[generate] tidy testdata module"
 	go mod tidy
 
