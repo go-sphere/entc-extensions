@@ -31,11 +31,11 @@ verify:
 		go test ./...; \
 		cd - >/dev/null; \
 	done; \
-	cd testdata && $(MAKE) verify-generated
+	cd testdata && $(MAKE) verify
 
 .PHONY: regen
 regen:
-	cd testdata && $(MAKE) generate-all
+	cd testdata && $(MAKE) generate
 
 .PHONY: test
 test:
