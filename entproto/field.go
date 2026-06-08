@@ -6,6 +6,7 @@ import (
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema"
 	"github.com/go-viper/mapstructure/v2"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -25,6 +26,12 @@ type pbfield struct {
 	Number   int
 	Type     descriptorpb.FieldDescriptorProto_Type
 	TypeName string
+	// ProtoFile, when set, names the .proto file that defines TypeName for an
+	// externally-defined message. It is filled in by MessageField so the
+	// adapter can pick up the import without requiring a separate
+	// RegisterCustomType call. It serialises along with the rest of the
+	// annotation via mapstructure.
+	ProtoFile string
 }
 
 func (f pbfield) Name() string {
@@ -50,6 +57,40 @@ func Type(typ descriptorpb.FieldDescriptorProto_Type) FieldOption {
 func TypeName(n string) FieldOption {
 	return func(p *pbfield) {
 		p.TypeName = n
+	}
+}
+
+// MessageField annotates an ent field that should be emitted as a protobuf
+// message reference to an externally-defined type. It reads the fully-qualified
+// type name and proto file path straight off the supplied generated Go message
+// (no manual strings, no descriptorpb import needed); both are embedded in the
+// annotation so the generator can wire up the import without a separate
+// RegisterCustomType call.
+//
+// Typical usage on a JSON-backed column:
+//
+//	field.JSON("user", &sharedv1.User{}).
+//		Annotations(entproto.MessageField(3, &sharedv1.User{}))
+//
+// The generator will emit `import "shared/v1/user.proto";` and reference the
+// field as `shared.v1.User user = 3;`.
+func MessageField(num int, msg proto.Message) schema.Annotation {
+	if msg == nil {
+		panic("entproto: MessageField called with nil message")
+	}
+	d := msg.ProtoReflect().Descriptor()
+	if d == nil {
+		panic(fmt.Sprintf("entproto: MessageField(%T) returned nil descriptor", msg))
+	}
+	parent := d.ParentFile()
+	if parent == nil {
+		panic(fmt.Sprintf("entproto: MessageField(%T) descriptor has no parent file", msg))
+	}
+	return pbfield{
+		Number:    num,
+		Type:      descriptorpb.FieldDescriptorProto_TYPE_MESSAGE,
+		TypeName:  string(d.FullName()),
+		ProtoFile: parent.Path(),
 	}
 }
 

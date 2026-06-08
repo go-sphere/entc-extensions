@@ -33,6 +33,7 @@ func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 		protoPkgByType:   make(map[string]string, len(graph.Nodes)),
 		descriptors:      make(map[string]*desc.FileDescriptor),
 		schemaProtoFiles: make(map[string]string),
+		externalFiles:    make(map[string]struct{}),
 		errors:           make(map[string]error),
 	}
 	for _, node := range graph.Nodes {
@@ -51,13 +52,35 @@ type Adapter struct {
 	protoPkgByType   map[string]string
 	descriptors      map[string]*desc.FileDescriptor
 	schemaProtoFiles map[string]string
-	errors           map[string]error
+	// externalFiles holds proto file paths that were synthesised purely to
+	// satisfy cross-file linking for RegisterCustomType references. They must
+	// not be written to disk.
+	externalFiles map[string]struct{}
+	errors        map[string]error
 }
 
 // AllFileDescriptors returns a file descriptor per proto package for each package that contains
-// a successfully parsed ent.Schema
+// a successfully parsed ent.Schema. The map also includes stub descriptors for externally registered
+// custom types; use GeneratedFileDescriptors to filter those out.
 func (a *Adapter) AllFileDescriptors() map[string]*desc.FileDescriptor {
 	return a.descriptors
+}
+
+// GeneratedFileDescriptors returns the file descriptors that entproto owns and
+// should write to disk, excluding stubs synthesised for RegisterCustomType
+// dependencies.
+func (a *Adapter) GeneratedFileDescriptors() map[string]*desc.FileDescriptor {
+	if len(a.externalFiles) == 0 {
+		return a.descriptors
+	}
+	out := make(map[string]*desc.FileDescriptor, len(a.descriptors))
+	for name, fd := range a.descriptors {
+		if _, ext := a.externalFiles[name]; ext {
+			continue
+		}
+		out[name] = fd
+	}
+	return out
 }
 
 // GetMessageDescriptor retrieves the protobuf message descriptor for `schemaName`, if an error was returned
@@ -80,6 +103,7 @@ func (a *Adapter) parse() error {
 
 	protoPackages := make(map[string]*descriptorpb.FileDescriptorProto)
 	protoPackageDeps := make(map[string]map[string]struct{})
+	customStubs := map[string]*descriptorpb.FileDescriptorProto{}
 
 	for _, genType := range a.graph.Nodes {
 		messageDescriptor, err := a.toProtoMessageDescriptor(genType)
@@ -112,7 +136,7 @@ func (a *Adapter) parse() error {
 		fd.MessageType = append(fd.MessageType, messageDescriptor)
 		a.schemaProtoFiles[genType.Name] = *fd.Name
 
-		depPaths, err := a.extractDepPaths(protoPkg, messageDescriptor)
+		depPaths, err := a.extractDepPaths(protoPkg, messageDescriptor, customStubs)
 		if err != nil {
 			a.errors[genType.Name] = err
 			continue
@@ -133,6 +157,10 @@ func (a *Adapter) parse() error {
 
 	for _, fd := range protoPackages {
 		dpbDescriptors = append(dpbDescriptors, fd)
+	}
+	for _, stub := range customStubs {
+		dpbDescriptors = append(dpbDescriptors, stub)
+		a.externalFiles[stub.GetName()] = struct{}{}
 	}
 
 	descriptors, err := desc.CreateFileDescriptors(dpbDescriptors)
@@ -218,13 +246,20 @@ func relFileName(packageName string) *string {
 	return &joined
 }
 
-func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.DescriptorProto) ([]string, error) {
+func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.DescriptorProto, customStubs map[string]*descriptorpb.FileDescriptorProto) ([]string, error) {
 	var out []string
 	for _, fld := range m.Field {
 		if fld.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
 			continue
 		}
 		fieldTypeName := fld.GetTypeName()
+		if entry, ok := lookupCustomType(fieldTypeName); ok {
+			if _, exists := customStubs[entry.ProtoFile]; !exists {
+				customStubs[entry.ProtoFile] = buildCustomTypeStubFile(entry)
+			}
+			out = append(out, entry.ProtoFile)
+			continue
+		}
 		depTypeName := protoTypeShortName(fieldTypeName)
 		depType, ok := a.nodeByName[depTypeName]
 		if !ok {
@@ -423,7 +458,15 @@ func toProtoFieldDescriptor(f *gen.Field) (*descriptorpb.FieldDescriptorProto, e
 	if fann.Type != descriptorpb.FieldDescriptorProto_Type(0) {
 		fieldDesc.Type = &fann.Type
 		if len(fann.TypeName) > 0 {
-			fieldDesc.TypeName = &fann.TypeName
+			typeName := fann.TypeName
+			if fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+				fann.Type == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+				typeName = normalizeCustomTypeName(typeName)
+			}
+			fieldDesc.TypeName = &typeName
+			if fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && fann.ProtoFile != "" {
+				registerCustomType(fann.TypeName, fann.ProtoFile)
+			}
 		}
 		return fieldDesc, nil
 	}

@@ -63,7 +63,12 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 				return nil, err
 			}
 		default:
-			return nil, fmt.Errorf("entproto: no mapping for pb message type %q", pbd.GetMessageType().GetFullyQualifiedName())
+			// External proto message (via entproto.MessageField on a JSON column):
+			// ent and pb both store the same generated Go struct, so the
+			// conversion is identity. An empty Converter lets the template emit
+			// a direct assignment. The ent-field switch below would otherwise
+			// reject the non-scalar JSON type, so return early.
+			return out, nil
 		}
 	default:
 		return nil, fmt.Errorf("entproto: no mapping for pb field type %q", pbd.GetType())

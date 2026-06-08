@@ -125,8 +125,9 @@ func (e *Extension) generate(g *gen.Graph) error {
 	if errs != nil {
 		return fmt.Errorf("entproto: failed parsing some schemas: %w", errs)
 	}
-	allDescriptors := make([]*desc.FileDescriptor, 0, len(adapter.AllFileDescriptors()))
-	for _, filedesc := range adapter.AllFileDescriptors() {
+	generated := adapter.GeneratedFileDescriptors()
+	allDescriptors := make([]*desc.FileDescriptor, 0, len(generated))
+	for _, filedesc := range generated {
 		allDescriptors = append(allDescriptors, filedesc)
 	}
 	// Print the .proto files.
