@@ -18,9 +18,14 @@ This is a **multi-module Go monorepo** that extends [ent](https://entgo.io) ORM 
 ## Common Commands
 
 ```bash
-# Full lint pipeline across all modules (go fix/fmt/vet/get/test, mod tidy,
-# golangci-lint fmt+run, nilaway). Use this before committing.
-make lint-all
+# Update direct dependencies and tidy every module.
+make deps-update
+
+# Run non-mutating format, vet, golangci-lint, and nilaway checks.
+make lint
+
+# Verify dependencies, lint, regenerate testdata, and run all tests.
+make check
 
 # Regenerate testdata artifacts (proto, ent, conv, crud) and run tests.
 # This is what CI runs.
@@ -90,4 +95,4 @@ When debugging a generator change, run only the relevant step from `testdata/` r
 
 - After modifying a generator, you usually need to run the **full testdata pipeline** (`make regen`) because each generator consumes the previous one's output. Running only the affected module's `go test` will miss integration regressions.
 - The `entconv` module pulls `entproto` from `../entproto` via `replace` — when changing `entproto` public API, expect to update both at once.
-- `make lint-all` runs `nilaway` with one excluded file (`internal/pkg/database/ent/enttest/enttest.go`); new nil-safety findings should be fixed, not excluded.
+- `make lint` (and its `make lint-all` compatibility alias) runs `nilaway` with one excluded file (`internal/pkg/database/ent/enttest/enttest.go`); new nil-safety findings should be fixed, not excluded.

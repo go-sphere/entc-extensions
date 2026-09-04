@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"entgo.io/ent/entc/gen"
-	"github.com/jhump/protoreflect/desc"
+	"github.com/jhump/protoreflect/desc" //nolint:staticcheck // Adapter APIs still expose jhump v1 descriptors.
 )
 
 // FieldMap returns a FieldMap containing descriptors of all of the mappings between the ent schema field

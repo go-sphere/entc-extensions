@@ -9,7 +9,7 @@ import (
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
 	"github.com/go-sphere/entc-extensions/entproto"
-	"github.com/jhump/protoreflect/desc"
+	"github.com/jhump/protoreflect/desc" //nolint:staticcheck // FieldMappingDescriptor still exposes jhump v1 descriptors.
 	dpb "google.golang.org/protobuf/types/descriptorpb"
 )
 
