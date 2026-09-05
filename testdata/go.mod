@@ -1,6 +1,6 @@
 module github.com/go-sphere/entc-extensions/testdata
 
-go 1.26.4
+go 1.26.8
 
 replace github.com/go-sphere/entc-extensions/entconv => ../entconv
 

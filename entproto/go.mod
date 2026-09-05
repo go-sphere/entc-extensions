@@ -1,6 +1,6 @@
 module github.com/go-sphere/entc-extensions/entproto
 
-go 1.26.4
+go 1.26.8
 
 require (
 	entgo.io/ent v0.14.6
