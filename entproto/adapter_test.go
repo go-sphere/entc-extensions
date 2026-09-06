@@ -27,15 +27,18 @@ func TestToProtoMessageDescriptor_PreservesExistingIDAnnotations(t *testing.T) {
 	}
 	a := &Adapter{}
 
-	_, err := a.toProtoMessageDescriptor(node)
+	message, err := a.toProtoMessageDescriptor(node)
 	if err != nil {
 		t.Fatalf("toProtoMessageDescriptor returned error: %v", err)
 	}
 	if got := id.Annotations["ExistingKey"]; got != "keep-me" {
 		t.Fatalf("existing ID annotation lost, got=%v", got)
 	}
-	if _, ok := id.Annotations[FieldAnnotation]; !ok {
-		t.Fatalf("expected %s annotation to be added", FieldAnnotation)
+	if _, ok := id.Annotations[FieldAnnotation]; ok {
+		t.Fatal("default ID field annotation must not be written back to the input graph")
+	}
+	if len(message.Field) == 0 || message.Field[0].GetNumber() != IDFieldNumber {
+		t.Fatalf("generated ID field number = %v, want %d", message.Field[0].GetNumber(), IDFieldNumber)
 	}
 }
 

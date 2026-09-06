@@ -2,6 +2,7 @@ package entproto
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"entgo.io/ent/entc/gen"
@@ -140,6 +141,80 @@ func TestAdapter_DuplicateFieldNumberReturnsError(t *testing.T) {
 	}
 	if duplicate.Number != 2 {
 		t.Fatalf("duplicate number = %d, want 2", duplicate.Number)
+	}
+}
+
+func TestLoadAdapter_FailedSchemaReferencedByEdgeReturnsRootCause(t *testing.T) {
+	// User fails to parse because of an unsupported JSON map field.
+	user := &gen.Type{
+		Name: "User",
+		ID: &gen.Field{
+			Name:        "id",
+			Type:        &field.TypeInfo{Type: field.TypeInt64},
+			UserDefined: true,
+			Annotations: map[string]any{FieldAnnotation: Field(1)},
+		},
+		Fields: []*gen.Field{
+			{
+				Name: "profile",
+				Type: &field.TypeInfo{
+					Type:  field.TypeJSON,
+					Ident: "map[string]interface{}",
+				},
+				Annotations: map[string]any{FieldAnnotation: Field(2)},
+			},
+		},
+		Annotations: map[string]any{MessageAnnotation: Message()},
+	}
+	post := &gen.Type{
+		Name: "Post",
+		ID: &gen.Field{
+			Name:        "id",
+			Type:        &field.TypeInfo{Type: field.TypeInt64},
+			UserDefined: true,
+			Annotations: map[string]any{FieldAnnotation: Field(1)},
+		},
+		Fields: []*gen.Field{
+			{
+				Name:        "title",
+				Type:        &field.TypeInfo{Type: field.TypeString},
+				Annotations: map[string]any{FieldAnnotation: Field(2)},
+			},
+		},
+		Edges: []*gen.Edge{
+			{
+				Name:   "author",
+				Type:   user,
+				Unique: true,
+				Annotations: map[string]any{
+					FieldAnnotation: Field(3),
+				},
+			},
+		},
+		Annotations: map[string]any{MessageAnnotation: Message()},
+	}
+	// nodeByName must include User so the edge descriptor can resolve it before
+	// the link-time check runs.
+	g := &gen.Graph{
+		Nodes: []*gen.Type{user, post},
+		Config: &gen.Config{
+			Package: "example.com/project/ent",
+		},
+	}
+
+	_, err := LoadAdapter(g)
+	if err == nil {
+		t.Fatal("expected LoadAdapter to fail when a referenced schema failed to parse")
+	}
+	var dangling *DanglingReferenceError
+	if !errors.As(err, &dangling) {
+		t.Fatalf("expected *DanglingReferenceError, got %T (%v)", err, err)
+	}
+	if dangling.Schema != "Post" || dangling.Field != "author" || dangling.RefSchema != "User" {
+		t.Fatalf("dangling reference = %s.%s -> %s, want Post.author -> User", dangling.Schema, dangling.Field, dangling.RefSchema)
+	}
+	if !strings.Contains(dangling.Error(), "profile") && !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("expected root cause mentioning User.profile unsupported type in error, got: %v", err)
 	}
 }
 

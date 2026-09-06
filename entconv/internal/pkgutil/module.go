@@ -139,3 +139,30 @@ func ResolveEntPackage(schemaPath, entPackage string) (string, error) {
 	r := NewResolver(schemaPath, entPackage, "")
 	return r.Resolve()
 }
+
+// DiskDirForImportPath maps a fully-qualified import path that lives inside the
+// module containing dir (found by walking up to its go.mod) to its absolute
+// directory on disk. Import paths belonging to other modules are not resolved
+// (the caller must decide how to handle that case).
+func DiskDirForImportPath(dir, importPath string) (string, error) {
+	moduleRoot, err := FindModuleRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	modulePath, err := GetModulePath(moduleRoot)
+	if err != nil {
+		return "", err
+	}
+	// A module may use a major-version suffix (e.g. /v2); the import path shares
+	// the module path prefix. Use the longest matching prefix so subpackages
+	// resolve correctly.
+	rel, ok := strings.CutPrefix(importPath, modulePath)
+	if !ok || (rel != "" && !strings.HasPrefix(rel, "/")) {
+		return "", fmt.Errorf("import path %q is not inside module %q", importPath, modulePath)
+	}
+	rel = strings.TrimPrefix(rel, "/")
+	if rel == "" {
+		return moduleRoot, nil
+	}
+	return filepath.Join(moduleRoot, filepath.FromSlash(rel)), nil
+}

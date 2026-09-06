@@ -6,6 +6,7 @@ import (
 	"math"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"entgo.io/ent/entc/gen"
@@ -163,8 +164,21 @@ func (a *Adapter) parse() error {
 		a.externalFiles[stub.GetName()] = struct{}{}
 	}
 
+	// If any schema failed to parse, fail before linking: a successful message
+	// may reference a failed one (e.g. via an edge or a message field), which
+	// would otherwise surface as a misleading "cannot resolve type" error deep
+	// inside desc.CreateFileDescriptors, hiding the actual root cause.
+	if len(a.errors) > 0 {
+		if err := a.linkDependencyError(); err != nil {
+			return err
+		}
+	}
+
 	descriptors, err := desc.CreateFileDescriptors(dpbDescriptors)
 	if err != nil {
+		if len(a.errors) > 0 {
+			return fmt.Errorf("%w (schema errors: %v)", err, a.schemaErrorSummary())
+		}
 		return err
 	}
 
@@ -193,6 +207,47 @@ func (a *Adapter) goPackageName(protoPkgName string) string {
 	entBase := a.graph.Package
 	slashed := strings.ReplaceAll(protoPkgName, ".", "/")
 	return path.Join(entBase, "proto", slashed)
+}
+
+// schemaErrorSummary renders the per-schema parse failures stored in a.errors.
+func (a *Adapter) schemaErrorSummary() string {
+	names := make([]string, 0, len(a.errors))
+	for name := range a.errors {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var b strings.Builder
+	for i, name := range names {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "%s: %v", name, a.errors[name])
+	}
+	return b.String()
+}
+
+// linkDependencyError reports when a successfully parsed schema references a
+// schema that failed to parse (e.g. through an edge or a message-typed field).
+// Returning an error here surfaces the root cause (the failed schema) together
+// with the referencing field, instead of letting desc.CreateFileDescriptors fail
+// later on a dangling type name with no relation to the actual problem.
+func (a *Adapter) linkDependencyError() error {
+	for _, genType := range a.graph.Nodes {
+		if _, failed := a.errors[genType.Name]; failed {
+			continue
+		}
+		for _, e := range genType.Edges {
+			if _, failed := a.errors[e.Type.Name]; failed {
+				return &DanglingReferenceError{
+					Schema:    genType.Name,
+					Field:     e.Name,
+					RefSchema: e.Type.Name,
+					Cause:     a.errors[e.Type.Name],
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // GetFileDescriptor returns the proto file descriptor containing the transformed proto message descriptor for
@@ -292,16 +347,29 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 		EnumType: []*descriptorpb.EnumDescriptorProto(nil),
 	}
 
+	// The default (non-user-defined) ID field is implicitly field number 1.
+	// Rather than mutating the caller's graph (genType.ID.Annotations), clone
+	// the ID field and annotate the clone so repeated LoadAdapter calls are
+	// side-effect free.
+	idField := genType.ID
 	if !genType.ID.UserDefined {
-		if genType.ID.Annotations == nil {
-			genType.ID.Annotations = make(map[string]any, 1)
+		annotations := genType.ID.Annotations
+		hasFieldAnno := false
+		if annotations != nil {
+			_, hasFieldAnno = annotations[FieldAnnotation]
 		}
-		if _, exists := genType.ID.Annotations[FieldAnnotation]; !exists {
-			genType.ID.Annotations[FieldAnnotation] = Field(IDFieldNumber)
+		if !hasFieldAnno {
+			clone := *genType.ID
+			clone.Annotations = make(map[string]any, len(annotations)+1)
+			for k, v := range annotations {
+				clone.Annotations[k] = v
+			}
+			clone.Annotations[FieldAnnotation] = Field(IDFieldNumber)
+			idField = &clone
 		}
 	}
 
-	all := []*gen.Field{genType.ID}
+	all := []*gen.Field{idField}
 	all = append(all, genType.Fields...)
 
 	for _, f := range all {

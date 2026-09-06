@@ -3,7 +3,10 @@ package entproto
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
+	"slices"
+	"strings"
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
@@ -117,15 +120,26 @@ func (e *Extension) generate(g *gen.Graph) error {
 		return fmt.Errorf("entproto: failed parsing ent graph: %w", err)
 	}
 	var errs error
+	var skipped []string
 	for _, schema := range g.Schemas {
 		name := schema.Name
 		_, err := adapter.GetFileDescriptor(name)
 		if err != nil && !errors.Is(err, ErrSchemaSkipped) {
 			errs = multierr.Append(errs, err)
+			continue
+		}
+		if err != nil && errors.Is(err, ErrSchemaSkipped) && !e.autoFill {
+			// With AutoFill disabled a schema without an entproto.Message
+			// annotation is silently absent from every .proto file. Warn so a
+			// forgotten annotation does not go unnoticed.
+			skipped = append(skipped, name)
 		}
 	}
 	if errs != nil {
 		return fmt.Errorf("entproto: failed parsing some schemas: %w", errs)
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintln(os.Stderr, skippedSchemasWarning(skipped))
 	}
 	generated := adapter.GeneratedFileDescriptors()
 	allDescriptors := make([]*desc.FileDescriptor, 0, len(generated))
@@ -139,4 +153,13 @@ func (e *Extension) generate(g *gen.Graph) error {
 	}
 
 	return nil
+}
+
+// skippedSchemasWarning renders the stderr warning listing schemas that will not
+// appear in any generated .proto file because they lack an entproto.Message
+// annotation (AutoFill disabled).
+func skippedSchemasWarning(skipped []string) string {
+	slices.Sort(skipped)
+	return "entproto: warning: schema(s) " + strings.Join(skipped, ", ") +
+		" have no entproto.Message(Generate=true) annotation and will not appear in any generated .proto file"
 }

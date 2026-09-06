@@ -76,3 +76,23 @@ func (e *DuplicateFieldNumberError) Error() string {
 func (*DuplicateFieldNumberError) Is(target error) bool {
 	return target == ErrDuplicateFieldNumber
 }
+
+// DanglingReferenceError describes a message that references another schema
+// (via an edge or message-typed field) whose proto descriptor failed to parse.
+type DanglingReferenceError struct {
+	Schema    string
+	Field     string
+	RefSchema string
+	Cause     error
+}
+
+func (e *DanglingReferenceError) Error() string {
+	return fmt.Sprintf(
+		"entproto: %s.%s references schema %q which failed to generate: %v",
+		e.Schema, e.Field, e.RefSchema, e.Cause,
+	)
+}
+
+func (e *DanglingReferenceError) Unwrap() error {
+	return e.Cause
+}

@@ -20,6 +20,14 @@ When building gRPC services with Ent ORM, you often need to convert between your
 - **Time Support**: Converts Ent `time.Time` values to and from protobuf `int64` Unix seconds
 - **Presence Support**: Preserves nil versus zero values for Ent `Optional().Nillable()` scalar fields generated as proto3 `optional`
 
+> **Scope note — what the generated converters do NOT cover.** `ToProto*`/`ToEnt*`
+> only map scalar fields, enums, and message-typed fields that store a single
+> generated Go message (e.g. an Ent `JSON` column typed as
+> `*timestamppb.Timestamp`). **Edge fields (associations) are intentionally
+> omitted**: fields such as `repeated Post posts` or `User author` exist on the
+> protobuf side but are never populated by the generated converter. Handle
+> related entities explicitly in your own code.
+
 ## Installation
 
 ```bash

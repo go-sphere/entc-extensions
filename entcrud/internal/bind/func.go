@@ -41,7 +41,7 @@ func GenBindFunc(action any, entityConf *conf.EntityConf, customConverters map[s
 	actionName := inspect.TypeName(action)
 	sourceName := inspect.TypeName(entityConf.Source)
 	targetName := inspect.TypeName(entityConf.Target)
-	funcName := strings.Replace(actionName, sourceName, "", 1) + sourceName
+	funcName := bindFuncName(actionName, sourceName)
 
 	keys, sourceFields := inspect.ExtractPublicFields(entityConf.Source, strcase.ToSnake)
 	_, targetFields := inspect.ExtractPublicFields(entityConf.Target, strcase.ToSnake)
@@ -93,6 +93,22 @@ func normalizeIgnoredFields(fields []string) map[string]struct{} {
 		result[strings.ToLower(field)] = struct{}{}
 	}
 	return result
+}
+
+// bindFuncName derives the generated function name from an action type and the
+// source entity type it operates on. ent generates action types named after
+// the entity plus a verb suffix (UserCreate, UserUpdateOne), so the entity name
+// is stripped from the front of the action name and re-appended at the end to
+// produce CreateUser / UpdateOneUser.
+//
+// Unlike a blanket substring removal, the entity prefix is only stripped when
+// the action name actually starts with it. This prevents corrupting names when
+// the entity name appears in the middle of an unrelated action identifier.
+func bindFuncName(actionName, sourceName string) string {
+	if strings.HasPrefix(actionName, sourceName) {
+		return strings.TrimPrefix(actionName, sourceName) + sourceName
+	}
+	return actionName
 }
 
 func buildFieldContexts(

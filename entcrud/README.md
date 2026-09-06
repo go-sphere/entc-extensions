@@ -2,6 +2,13 @@
 
 `entcrud` generates typed bind helpers between protobuf request structs and Ent mutation builders (for example `ent.UserCreate` / `ent.UserUpdateOne`).
 
+> **Scope note.** Generated bind helpers map scalar / enum / optional fields that
+> have a matching setter on the mutation builder. **Edge (association) fields are
+> not bound**: protobuf fields such as `repeated Post posts` or `User author`
+> have no `SetXxx` builder call emitted for them. Entity fields without a
+> matching protobuf field (and vice versa) are skipped — see `WithIgnoreFields`
+> when you want to make the omission explicit.
+
 ## Install
 
 ```bash

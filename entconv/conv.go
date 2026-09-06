@@ -8,6 +8,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"os"
 	"path"
 	"runtime/debug"
 	"slices"
@@ -231,18 +232,28 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading ent graph: %w", err)
 	}
+	// Fail fast when the IDType option diverges from the real generated ent
+	// structs (when they are available on disk). Without this check the
+	// generator can emit converters that do not compile.
+	if err := verifyIDTypesAgainstSource(g, opts.SchemaPath); err != nil {
+		return nil, err
+	}
 
 	protoTypes, err := parseProtoFile(opts.ProtoFile)
 	if err != nil {
 		return nil, fmt.Errorf("parsing proto file: %w", err)
 	}
 
-	typesToGenerate, missing := matchTypes(g, protoTypes)
+	typesToGenerate, missing := matchTypes(g, protoTypes.Messages)
 	if missing != nil {
 		switch normalizePolicy(opts.MissingProtoPolicy) {
 		case MissingProtoPolicyWarn:
 			if opts.WarningHandler != nil {
 				opts.WarningHandler(missing)
+			} else {
+				// Without a caller-provided handler, surface the warning on
+				// stderr instead of silently dropping the missing types.
+				fmt.Fprintln(os.Stderr, "entconv:", missing)
 			}
 		default:
 			return nil, missing
@@ -259,6 +270,9 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 	}
 	if err := validateProtoContracts(typesToGenerate, adapter); err != nil {
 		return nil, fmt.Errorf("validating proto contract: %w", err)
+	}
+	if err := validateEnumConstReferences(typesToGenerate, adapter, protoTypes.Consts); err != nil {
+		return nil, fmt.Errorf("validating enum constant references: %w", err)
 	}
 
 	return generator.New(
@@ -325,35 +339,50 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) ([]
 	return typesToGenerate, nil
 }
 
-func parseProtoFile(filePath string) (map[string]*generator.ProtoMessage, error) {
+// ProtoFileInfo holds the parsed contents of a generated .pb.go file: the
+// message structs (used for field-contract validation) and the set of declared
+// top-level constants (used to validate generated enum references before the
+// converter code is written).
+type ProtoFileInfo struct {
+	Messages map[string]*generator.ProtoMessage
+	Consts   map[string]struct{}
+}
+
+func parseProtoFile(filePath string) (*ProtoFileInfo, error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, filePath, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file: %w", err)
 	}
 
-	result := make(map[string]*generator.ProtoMessage)
+	info := &ProtoFileInfo{
+		Messages: make(map[string]*generator.ProtoMessage),
+		Consts:   make(map[string]struct{}),
+	}
 
 	ast.Inspect(node, func(n ast.Node) bool {
-		typeSpec, ok := n.(*ast.TypeSpec)
-		if !ok {
-			return true
+		switch spec := n.(type) {
+		case *ast.TypeSpec:
+			structType, ok := spec.Type.(*ast.StructType)
+			if !ok {
+				return true
+			}
+			msg := &generator.ProtoMessage{
+				Name:   spec.Name.Name,
+				Fields: parseStructFields(structType),
+			}
+			info.Messages[msg.Name] = msg
+		case *ast.ValueSpec:
+			// Top-level const declarations (enum values) declare exactly one
+			// name per spec; collect them all.
+			for _, name := range spec.Names {
+				info.Consts[name.Name] = struct{}{}
+			}
 		}
-
-		structType, ok := typeSpec.Type.(*ast.StructType)
-		if !ok {
-			return true
-		}
-
-		msg := &generator.ProtoMessage{
-			Name:   typeSpec.Name.Name,
-			Fields: parseStructFields(structType),
-		}
-		result[msg.Name] = msg
 		return true
 	})
 
-	return result, nil
+	return info, nil
 }
 
 func parseStructFields(st *ast.StructType) []generator.ProtoField {
@@ -460,6 +489,9 @@ func validateProtoContracts(types []generator.TypeInfo, adapter *entproto.Adapte
 					Message: typeInfo.MessageName, Field: fieldName, Expected: expected, Actual: actual,
 				}
 			}
+			if err := validateMessageFieldEntShape(typeInfo, mapping, expected); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -543,4 +575,115 @@ func normalizePolicy(v MissingProtoPolicy) MissingProtoPolicy {
 		return MissingProtoPolicyStrict
 	}
 	return MissingProtoPolicy(strings.ToLower(string(v)))
+}
+
+// validateMessageFieldEntShape checks that when a proto field is a message
+// reference, the corresponding ent field holds a Go value that the converter
+// can assign directly (the generator emits an identity assignment for these).
+// The ent field is typically a JSON column typed as the same generated Go
+// message. A mismatch here would silently produce code that does not compile.
+func validateMessageFieldEntShape(typeInfo generator.TypeInfo, mapping *entproto.FieldMappingDescriptor, pbGoType string) error {
+	if mapping.PbFieldDescriptor.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+		mapping.IsEdgeField || mapping.EntField == nil {
+		return nil
+	}
+	entType := mapping.EntField.Type.String()
+	if entType == "" {
+		return nil
+	}
+	// ent JSON columns carry the Go type in Ident (e.g. *timestamppb.Timestamp);
+	// basic scalar columns have no Go type and cannot hold a message.
+	if canonicalProtoGoType(entType) != canonicalProtoGoType(pbGoType) {
+		return &ProtoFieldContractError{
+			Message: typeInfo.MessageName,
+			Field:   mapping.PbFieldDescriptor.GetName(),
+			Expected: fmt.Sprintf(
+				"ent field of Go type compatible with %s (message field; converter assigns it directly)",
+				pbGoType,
+			),
+			Actual: entType,
+		}
+	}
+	return nil
+}
+
+// EnumConstMissingError reports that the generated converter would reference a
+// protobuf enum constant that does not exist in the supplied .pb.go file.
+type EnumConstMissingError struct {
+	Message string
+	Field   string
+	Const   string
+}
+
+func (e *EnumConstMissingError) Error() string {
+	return fmt.Sprintf(
+		"proto message %s field %s references enum constant %s which is not declared in the .pb.go file",
+		e.Message, e.Field, e.Const,
+	)
+}
+
+// validateEnumConstReferences verifies that every protobuf enum constant the
+// converter template will reference actually exists in the parsed .pb.go file.
+// Without this check a naming drift between entproto's enum-value generation
+// and the converter template's constant derivation would silently produce code
+// that does not compile.
+func validateEnumConstReferences(types []generator.TypeInfo, adapter *entproto.Adapter, consts map[string]struct{}) error {
+	for _, typeInfo := range types {
+		fieldMap, err := adapter.FieldMap(typeInfo.Type.Name)
+		if err != nil {
+			return err
+		}
+		enums := fieldMap.Enums()
+		for _, mapping := range enums {
+			entField := mapping.EntField
+			if entField == nil {
+				continue
+			}
+			enumType := mapping.PbFieldDescriptor.GetEnumType()
+			if enumType == nil {
+				continue
+			}
+			omitPrefix := enumAnnotationOmitPrefix(entField)
+			for _, opt := range entField.Enums {
+				constName := pbEnumConstName(typeInfo.Type.Name, enumType.GetName(), opt.Value, omitPrefix)
+				if _, ok := consts[constName]; !ok {
+					return &EnumConstMissingError{
+						Message: typeInfo.MessageName,
+						Field:   mapping.PbFieldDescriptor.GetName(),
+						Const:   constName,
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// enumAnnotationOmitPrefix mirrors the converter template's access to the
+// entproto.Enum annotation's OmitFieldPrefix flag.
+func enumAnnotationOmitPrefix(f *gen.Field) bool {
+	if f == nil || f.Annotations == nil {
+		return false
+	}
+	v, ok := f.Annotations[entproto.EnumAnnotation]
+	if !ok {
+		return false
+	}
+	// The annotation travels as a decoded map[string]any (JSON round-trip).
+	if m, ok := v.(map[string]any); ok {
+		b, _ := m["OmitFieldPrefix"].(bool)
+		return b
+	}
+	return false
+}
+
+// pbEnumConstName derives the Go constant name protoc-gen-go emits for a
+// protobuf enum value of message `messageName`/enum `enumName`. It must stay in
+// lockstep with the converter template and entproto's enum value naming.
+func pbEnumConstName(messageName, enumName, value string, omitPrefix bool) string {
+	name := messageName + "_"
+	if !omitPrefix {
+		name += strings.ToUpper(gen.Funcs["snake"].(func(string) string)(enumName)) + "_"
+	}
+	return name + entproto.NormalizeEnumIdentifier(value)
 }

@@ -21,6 +21,16 @@ type customTypeEntry struct {
 }
 
 var (
+	// customTypeRegistry is a process-wide registry of externally-defined
+	// protobuf message types. It is intentionally global because annotations
+	// are declared in ent schemas (package-level data) and must be resolvable
+	// when LoadAdapter runs, without threading state through every schema.
+	//
+	// This has two consequences callers should be aware of:
+	//   - registering the same type name with a different proto file path in
+	//     the same process panics (see registerCustomTypeDetails); and
+	//   - the registry is shared across Extension instances and test runs
+	//     (resetCustomTypeRegistry exists for tests).
 	customTypeRegistryMu sync.RWMutex
 	customTypeRegistry   = map[string]customTypeEntry{}
 )
