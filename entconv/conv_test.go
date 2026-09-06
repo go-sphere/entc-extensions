@@ -54,6 +54,9 @@ func TestGenerateConverter_SequentialCallsUseCurrentProtoAlias(t *testing.T) {
 	if !strings.Contains(secondCode, "*pbB.User") {
 		t.Fatalf("second output does not use current alias in signatures; output:\n%s", secondCode)
 	}
+	if !strings.Contains(secondCode, "e.Nickname = new(*v.Nickname)") {
+		t.Fatalf("second output does not preserve nillable nickname; output:\n%s", secondCode)
+	}
 }
 
 func TestGenerateConverterWithOptions_SequentialCallsUseCurrentProtoAlias(t *testing.T) {
@@ -146,7 +149,7 @@ func TestDefaultOptions_UsesScaffoldDefaults(t *testing.T) {
 
 func TestGenerateConverter_StrictMissingProtoPolicyFails(t *testing.T) {
 	opts := testOptions(t, "entpb")
-	opts.ProtoFile = writeProtoFixture(t, "missingpb", "NotUser")
+	opts.ProtoFile = writeProtoFixture(t, "missingpb", "NotUser", "")
 	opts.MissingProtoPolicy = MissingProtoPolicyStrict
 
 	_, err := GenerateConverter(opts)
@@ -164,7 +167,7 @@ func TestGenerateConverter_StrictMissingProtoPolicyFails(t *testing.T) {
 
 func TestGenerateConverter_WarnMissingProtoPolicyContinues(t *testing.T) {
 	opts := testOptions(t, "warnpb")
-	opts.ProtoFile = writeProtoFixture(t, "warnpb", "User")
+	opts.ProtoFile = writeProtoFixture(t, "warnpb", "User", "Id int64\nName string\nNickname *string")
 	opts.MissingProtoPolicy = MissingProtoPolicyWarn
 
 	var warned error
@@ -188,6 +191,53 @@ func TestGenerateConverter_WarnMissingProtoPolicyContinues(t *testing.T) {
 	}
 	if len(missing.Missing) != 1 || missing.Missing[0] != "Post" {
 		t.Fatalf("missing messages = %v, want [Post]", missing.Missing)
+	}
+}
+
+func TestGenerateConverter_RejectsIncompleteProtoMessage(t *testing.T) {
+	opts := testOptions(t, "brokenpb")
+	opts.ProtoFile = writeProtoFixture(t, "brokenpb", "User", "Id int64")
+	opts.MissingProtoPolicy = MissingProtoPolicyWarn
+
+	_, err := GenerateConverter(opts)
+	var contract *ProtoFieldContractError
+	if !errors.As(err, &contract) {
+		t.Fatalf("expected ProtoFieldContractError, got %T (%v)", err, err)
+	}
+	if contract.Message != "User" || contract.Field != "Name" {
+		t.Fatalf("contract error = %+v, want User.Name", contract)
+	}
+}
+
+func TestGenerateConverter_RejectsMismatchedProtoFieldType(t *testing.T) {
+	opts := testOptions(t, "brokenpb")
+	opts.ProtoFile = writeProtoFixture(t, "brokenpb", "User", "Id string\nName string\nNickname *string")
+	opts.MissingProtoPolicy = MissingProtoPolicyWarn
+
+	_, err := GenerateConverter(opts)
+	var contract *ProtoFieldContractError
+	if !errors.As(err, &contract) {
+		t.Fatalf("expected ProtoFieldContractError, got %T (%v)", err, err)
+	}
+	if contract.Field != "Id" || contract.Expected != "int64" || contract.Actual != "string" {
+		t.Fatalf("contract error = %+v", contract)
+	}
+}
+
+func TestValidateOptions_RejectsInvalidIDType(t *testing.T) {
+	opts := testOptions(t, "entpb")
+	opts.IDType = "uint32"
+
+	err := validateOptions(opts)
+	var invalid *InvalidIDTypeError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected InvalidIDTypeError, got %T (%v)", err, err)
+	}
+}
+
+func TestProtoDescriptorGoName_NestedMessage(t *testing.T) {
+	if got := protoDescriptorGoName("google.protobuf.FieldOptions.FeatureSupport", "google.protobuf"); got != "FieldOptions_FeatureSupport" {
+		t.Fatalf("nested protobuf Go name = %q, want FieldOptions_FeatureSupport", got)
 	}
 }
 
@@ -233,10 +283,10 @@ func moduleRoot(t *testing.T) string {
 	return filepath.Dir(file)
 }
 
-func writeProtoFixture(t *testing.T, pkg, msg string) string {
+func writeProtoFixture(t *testing.T, pkg, msg, fields string) string {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "fixture.pb.go")
-	content := fmt.Sprintf("package %s\ntype %s struct{}\n", pkg, msg)
+	content := fmt.Sprintf("package %s\ntype %s struct {\n%s\n}\n", pkg, msg, fields)
 	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fixture pb.go: %v", err)
 	}

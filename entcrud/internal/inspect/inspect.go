@@ -206,15 +206,17 @@ func generateCheckExpr(sourceName string, field reflect.StructField, wantZero bo
 }
 
 // GenerateTypeConversion generates Go code for type conversion from target field to source field.
-func GenerateTypeConversion(targetField, sourceField reflect.StructField) string {
-	// Default: use source field type for conversion
-	return sourceField.Type.String()
+func GenerateTypeConversion(_ reflect.StructField, sourceType reflect.Type) string {
+	return sourceType.String()
 }
 
 // GenerateTypeConversionExpr generates Go code for type conversion expression.
-func GenerateTypeConversionExpr(targetField, sourceField reflect.StructField) string {
-	// Default: use source field type for conversion
-	return fmt.Sprintf("%s(target.%s)", sourceField.Type.String(), targetField.Name)
+func GenerateTypeConversionExpr(targetField reflect.StructField, sourceType reflect.Type) string {
+	value := "target." + targetField.Name
+	if targetField.Type.Kind() == reflect.Pointer {
+		value = "*" + value
+	}
+	return fmt.Sprintf("%s(%s)", sourceType.String(), value)
 }
 
 // Import represents a Go import with path and optional alias.

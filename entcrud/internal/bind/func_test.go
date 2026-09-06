@@ -21,6 +21,10 @@ type createAction struct{}
 
 func (createAction) SetBirthday(time.Time) {}
 
+func BirthdayFromUnix(v int64) time.Time {
+	return time.Unix(v, 0)
+}
+
 func TestGenBindFunc_StrictTypeCheckReturnsStructuredError(t *testing.T) {
 	entity := conf.NewEntity(sourceEntity{}, targetMessage{}, []any{createAction{}})
 
@@ -65,7 +69,7 @@ func TestGenBindFunc_CustomConverterOverridesMismatch(t *testing.T) {
 		sourceEntity{},
 		targetMessage{},
 		[]any{createAction{}},
-		conf.WithCustomFieldConverter("birthday", func(v int64) time.Time { return time.Unix(v, 0) }),
+		conf.WithCustomFieldConverter("birthday", BirthdayFromUnix),
 	)
 
 	code, err := GenBindFunc(createAction{}, entity, entity.CustomFieldConverters, true)
@@ -74,5 +78,84 @@ func TestGenBindFunc_CustomConverterOverridesMismatch(t *testing.T) {
 	}
 	if !strings.Contains(code, "SetBirthday") {
 		t.Fatalf("expected generated code to contain SetBirthday, got:\n%s", code)
+	}
+}
+
+func TestGenBindFunc_RejectsAnonymousCustomConverter(t *testing.T) {
+	entity := conf.NewEntity(
+		sourceEntity{},
+		targetMessage{},
+		[]any{createAction{}},
+		conf.WithCustomFieldConverter("birthday", func(v int64) time.Time { return time.Unix(v, 0) }),
+	)
+
+	_, err := GenBindFunc(createAction{}, entity, entity.CustomFieldConverters, true)
+	var mismatch *conf.TypeMismatchListError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected TypeMismatchListError, got %T (%v)", err, err)
+	}
+}
+
+type pointerTargetMessage struct {
+	Birthday *string
+}
+
+func TestGenBindFunc_StrictTypeCheckRejectsIncompatiblePointer(t *testing.T) {
+	entity := conf.NewEntity(sourceEntity{}, pointerTargetMessage{}, []any{createAction{}})
+
+	_, err := GenBindFunc(createAction{}, entity, nil, true)
+	var mismatch *conf.TypeMismatchListError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected TypeMismatchListError, got %T (%v)", err, err)
+	}
+}
+
+type nillableSourceEntity struct {
+	Nickname *string
+}
+
+type optionalTargetMessage struct {
+	Nickname *string
+}
+
+type nillableCreateAction struct{}
+
+func (nillableCreateAction) SetNickname(string)          {}
+func (nillableCreateAction) SetNillableNickname(*string) {}
+func (nillableCreateAction) ClearNickname()              {}
+
+func TestGenBindFunc_AcceptsMatchingOptionalPointer(t *testing.T) {
+	entity := conf.NewEntity(nillableSourceEntity{}, optionalTargetMessage{}, []any{nillableCreateAction{}})
+
+	code, err := GenBindFunc(nillableCreateAction{}, entity, nil, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc failed: %v", err)
+	}
+	if !strings.Contains(code, "SetNillableNickname(target.Nickname)") {
+		t.Fatalf("generated code does not preserve optional pointer:\n%s", code)
+	}
+}
+
+type numericSourceEntity struct {
+	Age int
+}
+
+type optionalNumericTargetMessage struct {
+	Age *int32
+}
+
+type numericCreateAction struct{}
+
+func (numericCreateAction) SetAge(int) {}
+
+func TestGenBindFunc_DereferencesPointerBeforeNumericConversion(t *testing.T) {
+	entity := conf.NewEntity(numericSourceEntity{}, optionalNumericTargetMessage{}, []any{numericCreateAction{}})
+
+	code, err := GenBindFunc(numericCreateAction{}, entity, nil, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc failed: %v", err)
+	}
+	if !strings.Contains(code, "SetAge(int(*target.Age))") {
+		t.Fatalf("generated code does not dereference the pointer before conversion:\n%s", code)
 	}
 }

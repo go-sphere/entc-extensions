@@ -221,6 +221,7 @@ func (g *Generator) generateBody(w io.Writer) error {
 // Imports returns the list of imports needed by the generated code.
 func (g *Generator) Imports() []string {
 	imp := []string{}
+	seen := make(map[string]struct{})
 
 	// Add ent import
 	imp = append(imp, fmt.Sprintf(`ent "%s"`, g.EntPackage))
@@ -230,16 +231,23 @@ func (g *Generator) Imports() []string {
 		imp = append(imp, fmt.Sprintf(`%s "%s"`, g.ProtoAlias, g.ProtoPackagePath))
 	}
 
-	// Check if any type needs the post package (for enums)
+	// Ent enum types live in the generated subpackage for their schema.
 	for _, t := range g.Types {
 		fieldMap, err := g.Adapter.FieldMap(t.Type.Name)
 		if err != nil {
 			continue
 		}
 		for range fieldMap.Enums() {
-			enumPkg, _ := g.entEnumPkg(t.Type.Name)
+			enumPkg, err := g.entEnumPkg(t.Type.Name)
+			if err != nil {
+				continue
+			}
 			if enumPkg != g.EntPackage {
-				imp = append(imp, fmt.Sprintf(`post "%s"`, enumPkg))
+				if _, ok := seen[enumPkg]; ok {
+					continue
+				}
+				seen[enumPkg] = struct{}{}
+				imp = append(imp, fmt.Sprintf(`%s "%s"`, path.Base(enumPkg), enumPkg))
 			}
 		}
 	}

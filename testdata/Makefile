@@ -1,4 +1,4 @@
-.PHONY: init deps-update clean generate verify test
+.PHONY: init deps-update clean generate verify test update-golden
 
 init:
 	go install github.com/bufbuild/buf/cmd/buf@v1.59.0
@@ -32,5 +32,8 @@ verify:
 	go test ./...
 	@echo "[verify] run e2e assertions"
 	go test ./tests
+
+update-golden:
+	go test ./tests -run TestGeneratedGoldenFiles -update-golden
 
 test: generate verify

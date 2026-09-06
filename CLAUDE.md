@@ -81,7 +81,7 @@ When debugging a generator change, run only the relevant step from `testdata/` r
 - Entry point: `entconv.GenerateConverterFile(opts *Options)` in `conv.go`.
 - `internal/generator` — parses the `.pb.go` file with `go/ast`/`golang.org/x/tools/go/packages` and walks Ent schema files to align field types.
 - `internal/generator/template/converter.tmpl` — the Go template that emits the converter.
-- Handles `google.protobuf.Timestamp` ↔ `time.Time`, enum mapping, optional pointer fields.
+- Handles protobuf `int64` Unix seconds ↔ `time.Time`, enum mapping, and optional pointer fields.
 
 ### entcrud
 

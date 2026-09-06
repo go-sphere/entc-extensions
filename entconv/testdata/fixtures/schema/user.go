@@ -23,5 +23,9 @@ func (User) Fields() []ent.Field {
 			Annotations(entproto.Field(1)),
 		field.String("name").
 			Annotations(entproto.Field(2)),
+		field.String("nickname").
+			Optional().
+			Nillable().
+			Annotations(entproto.Field(3)),
 	}
 }

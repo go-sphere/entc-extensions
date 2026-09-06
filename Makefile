@@ -10,7 +10,7 @@ DIRECT_DEPS_TEMPLATE := {{if and (not .Main) (not .Indirect) (not .Replace)}}{{.
 
 .DEFAULT_GOAL := check
 
-.PHONY: deps-update tidy fmt test lint lint-all check verify regen
+.PHONY: deps-update tidy fmt test lint lint-all check verify regen update-golden
 .PHONY: tag tag-all tag-delete
 
 deps-update:
@@ -73,6 +73,9 @@ verify:
 
 regen:
 	$(MAKE) -C testdata generate
+
+update-golden: regen
+	$(MAKE) -C testdata update-golden
 
 tag:
 	@test -n "$(TAG)" || { echo "TAG is required: make tag TAG=v0.0.1"; exit 1; }

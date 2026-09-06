@@ -48,6 +48,33 @@ func (User) Fields() []ent.Field {
 			Annotations(entproto.Field(14)),
 		field.JSON("points", []int64{}).
 			Annotations(entproto.Field(15)),
+		field.String("optional_note").
+			Optional().
+			Nillable().
+			Annotations(entproto.Field(18)),
+		field.Bytes("optional_blob").
+			Optional().
+			Nillable().
+			Annotations(entproto.Field(19)),
+		field.Int("optional_count").
+			Optional().
+			Nillable().
+			Annotations(entproto.Field(20)),
+		field.Time("optional_birthday").
+			Optional().
+			Nillable().
+			Annotations(entproto.Field(21)),
+		field.Enum("optional_level").
+			Values("low", "high").
+			Optional().
+			Nillable().
+			Annotations(
+				entproto.Field(22),
+				entproto.Enum(map[string]int32{
+					"low":  1,
+					"high": 2,
+				}),
+			),
 	}
 }
 

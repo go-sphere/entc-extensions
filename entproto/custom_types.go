@@ -17,6 +17,7 @@ type customTypeEntry struct {
 	ProtoFile    string
 	ProtoPackage string
 	MessageName  string
+	MessagePath  string
 }
 
 var (
@@ -52,7 +53,12 @@ func RegisterCustomType(msg proto.Message) {
 	if parent == nil {
 		panic(fmt.Sprintf("entproto: RegisterCustomType(%T) descriptor has no parent file", msg))
 	}
-	registerCustomType(string(d.FullName()), parent.Path())
+	registerCustomTypeDetails(
+		string(d.FullName()),
+		parent.Path(),
+		string(parent.Package()),
+		strings.TrimPrefix(string(d.FullName()), string(parent.Package())+"."),
+	)
 }
 
 // registerCustomType is the low-level primitive used by RegisterCustomType and
@@ -69,10 +75,21 @@ func registerCustomType(protoTypeName, protoFilePath string) {
 	if idx <= 0 || idx == len(name)-1 {
 		panic(fmt.Sprintf("entproto: registerCustomType expects a fully-qualified name like \"pkg.Sub.Message\", got %q", protoTypeName))
 	}
+	registerCustomTypeDetails(protoTypeName, protoFilePath, name[:idx], name[idx+1:])
+}
+
+func registerCustomTypeDetails(protoTypeName, protoFilePath, protoPackage, messagePath string) {
+	name := strings.TrimPrefix(protoTypeName, ".")
+	messagePath = strings.TrimPrefix(messagePath, ".")
+	if name == "" || protoFilePath == "" || protoPackage == "" || messagePath == "" {
+		panic(fmt.Sprintf("entproto: incomplete custom type registration for %q", protoTypeName))
+	}
+	parts := strings.Split(messagePath, ".")
 	entry := customTypeEntry{
 		ProtoFile:    protoFilePath,
-		ProtoPackage: name[:idx],
-		MessageName:  name[idx+1:],
+		ProtoPackage: protoPackage,
+		MessageName:  parts[len(parts)-1],
+		MessagePath:  messagePath,
 	}
 	customTypeRegistryMu.Lock()
 	defer customTypeRegistryMu.Unlock()
@@ -107,17 +124,41 @@ func resetCustomTypeRegistry() {
 // declares the registered message inside its proto package. It is fed into
 // desc.CreateFileDescriptors so cross-file references can link, but it is
 // filtered out before printing so we never overwrite the user's real file.
-func buildCustomTypeStubFile(entry customTypeEntry) *descriptorpb.FileDescriptorProto {
-	file := entry.ProtoFile
-	pkg := entry.ProtoPackage
-	return &descriptorpb.FileDescriptorProto{
-		Name:    &file,
-		Package: &pkg,
-		Syntax:  toPtr("proto3"),
-		MessageType: []*descriptorpb.DescriptorProto{
-			{Name: toPtr(entry.MessageName)},
-		},
+func addCustomTypeToStub(files map[string]*descriptorpb.FileDescriptorProto, entry customTypeEntry) error {
+	stub, ok := files[entry.ProtoFile]
+	if !ok {
+		file := entry.ProtoFile
+		pkg := entry.ProtoPackage
+		stub = &descriptorpb.FileDescriptorProto{
+			Name:    &file,
+			Package: &pkg,
+			Syntax:  toPtr("proto3"),
+		}
+		files[entry.ProtoFile] = stub
+	} else if stub.GetPackage() != entry.ProtoPackage {
+		return fmt.Errorf("entproto: external proto file %q registered with conflicting packages %q and %q", entry.ProtoFile, stub.GetPackage(), entry.ProtoPackage)
 	}
+	stub.MessageType = addMessagePath(stub.MessageType, strings.Split(entry.MessagePath, "."))
+	return nil
+}
+
+func addMessagePath(messages []*descriptorpb.DescriptorProto, path []string) []*descriptorpb.DescriptorProto {
+	name := path[0]
+	var message *descriptorpb.DescriptorProto
+	for _, candidate := range messages {
+		if candidate.GetName() == name {
+			message = candidate
+			break
+		}
+	}
+	if message == nil {
+		message = &descriptorpb.DescriptorProto{Name: toPtr(name)}
+		messages = append(messages, message)
+	}
+	if len(path) > 1 {
+		message.NestedType = addMessagePath(message.NestedType, path[1:])
+	}
+	return messages
 }
 
 // normalizeCustomTypeName ensures a proto type name is in the FQN form expected

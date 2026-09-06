@@ -63,7 +63,7 @@ func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name 
     {{- $f := printf "e.%s" .EntField.StructField }}
     {{- if .EntField.Nillable }}
     if {{ $f }} != nil {
-        {{- $f = printf "*%s" $f }}
+        {{- $f = printf "(*%s)" $f }}
     {{- end }}
     {{- $conv := newConverter . $typeInfo.Type.Name }}
     {{- if $conv.ToProtoConversionModifier }}
@@ -83,7 +83,11 @@ func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name 
     {{- else }}
     {{ $varName }} := {{ $f }}
     {{- end }}
+    {{- if .IsProto3OptionalPointer }}
+    v.{{ .PbFieldName }} = new({{ $varName }})
+    {{- else }}
     v.{{ .PbFieldName }} = {{ $varName }}
+    {{- end }}
     {{- if .EntField.Nillable }}
     }
     {{- end }}
@@ -100,17 +104,43 @@ func ToEnt{{ $typeInfo.Type.Name }}(v *{{ protoIdent $typeInfo.Type.Name }}) (*{
     {{- range $fieldMap.Fields }}
     {{- $fieldName := .EntField.StructField }}
     {{- $pbField := .PbFieldName }}
+    {{- $pbValue := printf "v.%s" $pbField }}
+    {{- if .IsProto3Optional }}
+    if v.{{ $pbField }} != nil {
+    {{- if .IsProto3OptionalPointer }}
+    {{- $pbValue = printf "*v.%s" $pbField }}
+    {{- end }}
+    {{- end }}
     {{- $conv := newConverter . $typeInfo.Type.Name }}
     {{- if $conv.ToEntConstructor }}
-    e.{{ $fieldName }} = {{ ident $conv.ToEntConstructor }}(v.{{ $pbField }})
+    {{- if .EntField.Nillable }}
+    e.{{ $fieldName }} = new({{ ident $conv.ToEntConstructor }}({{ $pbValue }}))
+    {{- else }}
+    e.{{ $fieldName }} = {{ ident $conv.ToEntConstructor }}({{ $pbValue }})
+    {{- end }}
     {{- else if $conv.ToEntConversion }}
     {{- if $conv.ToEntConversionArg }}
-    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}(v.{{ $pbField }}, {{ $conv.ToEntConversionArg }})
+    {{- if .EntField.Nillable }}
+    e.{{ $fieldName }} = new({{ $conv.ToEntConversion }}({{ $pbValue }}, {{ $conv.ToEntConversionArg }}))
     {{- else }}
-    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}(v.{{ $pbField }})
+    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}({{ $pbValue }}, {{ $conv.ToEntConversionArg }})
     {{- end }}
     {{- else }}
-    e.{{ $fieldName }} = v.{{ $pbField }}
+    {{- if .EntField.Nillable }}
+    e.{{ $fieldName }} = new({{ $conv.ToEntConversion }}({{ $pbValue }}))
+    {{- else }}
+    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}({{ $pbValue }})
+    {{- end }}
+    {{- end }}
+    {{- else }}
+    {{- if .EntField.Nillable }}
+    e.{{ $fieldName }} = new({{ $pbValue }})
+    {{- else }}
+    e.{{ $fieldName }} = {{ $pbValue }}
+    {{- end }}
+    {{- end }}
+    {{- if .IsProto3Optional }}
+    }
     {{- end }}
     {{- end }}
     return e, nil

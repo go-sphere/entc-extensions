@@ -3,6 +3,8 @@ package bind
 import (
 	_ "embed"
 	"fmt"
+	"go/ast"
+	"go/token"
 	"reflect"
 	"strings"
 	"sync"
@@ -147,6 +149,16 @@ func buildFieldContext(
 	if !hasSetter {
 		return fieldContext{}, false, nil
 	}
+	setterArgType, ok := setterArgumentType(setter)
+	if !ok {
+		return fieldContext{}, true, &conf.TypeMismatchError{
+			Entity:     entityName,
+			Field:      sourceField.Name,
+			SourceType: setter.Type.String(),
+			TargetType: targetField.Type.String(),
+			Suggestion: "setter must accept exactly one field value",
+		}
+	}
 
 	settNillable, hasSettNillable := actionMethods[strcase.ToSnake("SetNillable"+sourceField.Name)]
 	clearOnNil, hasClearOnNil := actionMethods[strcase.ToSnake("Clear"+sourceField.Name)]
@@ -155,8 +167,9 @@ func buildFieldContext(
 	field := fieldContext{
 		FieldKeyPath: table + ".Field" + sourceField.Name,
 
-		TargetField: targetField,
-		SourceField: sourceField,
+		TargetField:   targetField,
+		SourceField:   sourceField,
+		SetterArgType: setterArgType,
 
 		SetterFuncName:       setter.Name,
 		SettNillableFuncName: settNillable.Name,
@@ -168,23 +181,30 @@ func buildFieldContext(
 	}
 
 	if targetFieldIsPtr {
-		field.TargetSourceIsSomeType = targetField.Type.Elem().String() == sourceField.Type.String()
+		field.TargetSourceIsSomeType = targetField.Type.Elem().AssignableTo(setterArgType)
 	} else {
-		field.TargetSourceIsSomeType = targetField.Type.String() == sourceField.Type.String()
+		field.TargetSourceIsSomeType = targetField.Type.AssignableTo(setterArgType)
 	}
 
 	if converter, ok := customConverters[key]; ok {
+		info, mismatch := validateCustomConverter(converter, targetField.Type, setterArgType, entityName, sourceField.Name)
+		if mismatch != nil {
+			return field, true, mismatch
+		}
 		field.HasCustomConverter = true
-		field.CustomConverter = inspect.GetFuncInfo(converter)
+		field.CustomConverter = info
 		return field, true, nil
 	}
 
-	if !field.TargetSourceIsSomeType && !targetFieldIsPtr &&
-		isKnownIncompatibleTypePair(sourceField.Type.String(), targetField.Type.String()) {
+	targetValueType := targetField.Type
+	if targetFieldIsPtr {
+		targetValueType = targetValueType.Elem()
+	}
+	if !targetValueType.AssignableTo(setterArgType) && !targetValueType.ConvertibleTo(setterArgType) {
 		return field, true, &conf.TypeMismatchError{
 			Entity:     entityName,
 			Field:      sourceField.Name,
-			SourceType: sourceField.Type.String(),
+			SourceType: setterArgType.String(),
 			TargetType: targetField.Type.String(),
 			Suggestion: fmt.Sprintf("add conf.WithCustomFieldConverter(%s.Field%s, <converter>)", strings.ToLower(entityName), sourceField.Name),
 		}
@@ -193,9 +213,42 @@ func buildFieldContext(
 	return field, true, nil
 }
 
-func isKnownIncompatibleTypePair(sourceType, targetType string) bool {
-	return (sourceType == "time.Time" && targetType == "int64") ||
-		(sourceType == "int64" && targetType == "time.Time")
+func setterArgumentType(method reflect.Method) (reflect.Type, bool) {
+	if method.Type.NumIn() != 2 {
+		return nil, false
+	}
+	return method.Type.In(1), true
+}
+
+func validateCustomConverter(
+	converter any,
+	targetType reflect.Type,
+	setterArgType reflect.Type,
+	entityName string,
+	fieldName string,
+) (inspect.FuncInfo, *conf.TypeMismatchError) {
+	converterType := reflect.TypeOf(converter)
+	info := inspect.GetFuncInfo(converter)
+	invalid := converterType == nil || converterType.Kind() != reflect.Func ||
+		converterType.NumIn() != 1 || converterType.NumOut() != 1 ||
+		info.ImportPath == "" || !token.IsIdentifier(info.Name) || !ast.IsExported(info.Name)
+	valueType := targetType
+	if valueType.Kind() == reflect.Pointer {
+		valueType = valueType.Elem()
+	}
+	if !invalid {
+		invalid = !valueType.AssignableTo(converterType.In(0)) || !converterType.Out(0).AssignableTo(setterArgType)
+	}
+	if invalid {
+		return inspect.FuncInfo{}, &conf.TypeMismatchError{
+			Entity:     entityName,
+			Field:      fieldName,
+			SourceType: setterArgType.String(),
+			TargetType: targetType.String(),
+			Suggestion: "custom converter must be an exported top-level func with one input matching the protobuf value and one output assignable to the Ent setter",
+		}
+	}
+	return info, nil
 }
 
 type bindContext struct {
@@ -212,8 +265,9 @@ type bindContext struct {
 type fieldContext struct {
 	FieldKeyPath string
 
-	TargetField reflect.StructField
-	SourceField reflect.StructField
+	TargetField   reflect.StructField
+	SourceField   reflect.StructField
+	SetterArgType reflect.Type
 
 	SetterFuncName       string
 	SettNillableFuncName string

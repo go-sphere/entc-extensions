@@ -254,8 +254,8 @@ func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.Descri
 		}
 		fieldTypeName := fld.GetTypeName()
 		if entry, ok := lookupCustomType(fieldTypeName); ok {
-			if _, exists := customStubs[entry.ProtoFile]; !exists {
-				customStubs[entry.ProtoFile] = buildCustomTypeStubFile(entry)
+			if err := addCustomTypeToStub(customStubs, entry); err != nil {
+				return nil, err
 			}
 			out = append(out, entry.ProtoFile)
 			continue
@@ -312,6 +312,13 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 		protoField, err := toProtoFieldDescriptor(f)
 		if err != nil {
 			return nil, err
+		}
+		if f.Nillable && protoField.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED &&
+			protoField.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			oneofIndex := int32(len(msg.OneofDecl)) //nolint:gosec // bounded by the number of message fields.
+			protoField.Proto3Optional = toPtr(true)
+			protoField.OneofIndex = &oneofIndex
+			msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{Name: toPtr("_" + f.Name)})
 		}
 		// If the field is an enum type, we need to create the enum descriptor as well.
 		if f.Type.Type == field.TypeEnum {
@@ -465,7 +472,11 @@ func toProtoFieldDescriptor(f *gen.Field) (*descriptorpb.FieldDescriptorProto, e
 			}
 			fieldDesc.TypeName = &typeName
 			if fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && fann.ProtoFile != "" {
-				registerCustomType(fann.TypeName, fann.ProtoFile)
+				if fann.ProtoPackage != "" && fann.MessagePath != "" {
+					registerCustomTypeDetails(fann.TypeName, fann.ProtoFile, fann.ProtoPackage, fann.MessagePath)
+				} else {
+					registerCustomType(fann.TypeName, fann.ProtoFile)
+				}
 			}
 		}
 		return fieldDesc, nil

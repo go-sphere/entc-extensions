@@ -35,7 +35,7 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 							source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
 						{{- else}}
 							if target.{{.TargetField.Name}} != nil {
-								source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SourceField}})
+								source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
 							} else {
 								source.{{.SettNillableFuncName}}(nil)
 							}
@@ -46,7 +46,7 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 						source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
 					{{- else}}
 						if target.{{.TargetField.Name}} != nil {
-							source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SourceField}})
+							source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
 						} else {
 							source.{{.SettNillableFuncName}}(nil)
 						}
@@ -57,7 +57,7 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 					{{- if .TargetSourceIsSomeType}}
 						source.{{.SetterFuncName}}(*target.{{.TargetField.Name}})
 					{{- else}}
-						source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SourceField}})
+						source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
 					{{- end}}
 				}
 			{{- end}}
@@ -66,7 +66,7 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 				{{- if .TargetSourceIsSomeType}}
 					source.{{.SetterFuncName}}(target.{{.TargetField.Name}})
 				{{- else}}
-					source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SourceField}})
+					source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
 				{{- end}}
 			}
 		{{- end}}

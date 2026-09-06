@@ -28,11 +28,13 @@ func NewExtension(opts ...ExtensionOption) (*Extension, error) {
 // To use within an entc.go file:
 //
 //	func main() {
+//		ext, err := entproto.NewExtension()
+//		if err != nil {
+//			log.Fatal(err)
+//		}
 //		if err := entc.Generate("./schema",
 //			&gen.Config{},
-//			entc.Extensions(
-//				entproto.NewExtension(),
-//			),
+//			entc.Extensions(ext),
 //		); err != nil {
 //			log.Fatal("running ent codegen:", err)
 //		}

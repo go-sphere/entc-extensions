@@ -39,6 +39,38 @@ func TestToProtoMessageDescriptor_PreservesExistingIDAnnotations(t *testing.T) {
 	}
 }
 
+func TestToProtoMessageDescriptor_NillableFieldUsesProto3Optional(t *testing.T) {
+	nickname := &gen.Field{
+		Name:        "nickname",
+		Type:        &field.TypeInfo{Type: field.TypeString},
+		Nillable:    true,
+		Annotations: map[string]any{FieldAnnotation: Field(2)},
+	}
+	node := &gen.Type{
+		Name: "User",
+		ID: &gen.Field{
+			Name:        "id",
+			Type:        &field.TypeInfo{Type: field.TypeInt64},
+			UserDefined: true,
+			Annotations: map[string]any{FieldAnnotation: Field(1)},
+		},
+		Fields:      []*gen.Field{nickname},
+		Annotations: map[string]any{MessageAnnotation: Message()},
+	}
+
+	message, err := (&Adapter{}).toProtoMessageDescriptor(node)
+	if err != nil {
+		t.Fatalf("toProtoMessageDescriptor failed: %v", err)
+	}
+	protoField := message.Field[1]
+	if !protoField.GetProto3Optional() {
+		t.Fatal("nillable field is not marked proto3 optional")
+	}
+	if protoField.OneofIndex == nil || len(message.OneofDecl) != 1 || message.OneofDecl[0].GetName() != "_nickname" {
+		t.Fatalf("invalid synthetic oneof for optional field: field=%v oneofs=%v", protoField, message.OneofDecl)
+	}
+}
+
 func TestLoadAdapter_DedupesCrossPackageDependencies(t *testing.T) {
 	schemaPath := "./testdata/schema/multipkg"
 	g, err := entc.LoadGraph(schemaPath, &gen.Config{
@@ -159,4 +191,39 @@ func TestRegisterCustomType_NilPanics(t *testing.T) {
 		}
 	}()
 	RegisterCustomType(nil)
+}
+
+func TestAddCustomTypeToStub_AggregatesTopLevelAndNestedMessages(t *testing.T) {
+	files := map[string]*descriptorpb.FileDescriptorProto{}
+	entries := []customTypeEntry{
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", MessageName: "User", MessagePath: "User"},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", MessageName: "Address", MessagePath: "Address"},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", MessageName: "Inner", MessagePath: "Outer.Inner"},
+	}
+	for _, entry := range entries {
+		if err := addCustomTypeToStub(files, entry); err != nil {
+			t.Fatalf("add custom type %+v: %v", entry, err)
+		}
+	}
+
+	stub := files["shared/v1/types.proto"]
+	if stub == nil {
+		t.Fatal("missing aggregated stub")
+	}
+	if len(stub.MessageType) != 3 {
+		t.Fatalf("top-level messages = %d, want 3", len(stub.MessageType))
+	}
+	outer := findMessage(stub.MessageType, "Outer")
+	if outer == nil || findMessage(outer.NestedType, "Inner") == nil {
+		t.Fatalf("nested message Outer.Inner missing from stub: %v", stub)
+	}
+}
+
+func findMessage(messages []*descriptorpb.DescriptorProto, name string) *descriptorpb.DescriptorProto {
+	for _, message := range messages {
+		if message.GetName() == name {
+			return message
+		}
+	}
+	return nil
 }

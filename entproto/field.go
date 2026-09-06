@@ -2,6 +2,7 @@ package entproto
 
 import (
 	"fmt"
+	"strings"
 
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema"
@@ -23,9 +24,11 @@ func Field(num int, options ...FieldOption) schema.Annotation {
 }
 
 type pbfield struct {
-	Number   int
-	Type     descriptorpb.FieldDescriptorProto_Type
-	TypeName string
+	Number       int
+	Type         descriptorpb.FieldDescriptorProto_Type
+	TypeName     string
+	ProtoPackage string
+	MessagePath  string
 	// ProtoFile, when set, names the .proto file that defines TypeName for an
 	// externally-defined message. It is filled in by MessageField so the
 	// adapter can pick up the import without requiring a separate
@@ -87,10 +90,12 @@ func MessageField(num int, msg proto.Message) schema.Annotation {
 		panic(fmt.Sprintf("entproto: MessageField(%T) descriptor has no parent file", msg))
 	}
 	return pbfield{
-		Number:    num,
-		Type:      descriptorpb.FieldDescriptorProto_TYPE_MESSAGE,
-		TypeName:  string(d.FullName()),
-		ProtoFile: parent.Path(),
+		Number:       num,
+		Type:         descriptorpb.FieldDescriptorProto_TYPE_MESSAGE,
+		TypeName:     string(d.FullName()),
+		ProtoFile:    parent.Path(),
+		ProtoPackage: string(parent.Package()),
+		MessagePath:  strings.TrimPrefix(string(d.FullName()), string(parent.Package())+"."),
 	}
 }
 

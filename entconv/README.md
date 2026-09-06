@@ -17,7 +17,8 @@ When building gRPC services with Ent ORM, you often need to convert between your
 - **Configurable**: Flexible options to match your project structure
 - **Zero Dependencies**: Generated code has minimal external dependencies
 - **Enum Support**: Automatic conversion between Ent enums and Protobuf enums
-- **Timestamp Support**: Built-in handling of `google.protobuf.Timestamp`
+- **Time Support**: Converts Ent `time.Time` values to and from protobuf `int64` Unix seconds
+- **Presence Support**: Preserves nil versus zero values for Ent `Optional().Nillable()` scalar fields generated as proto3 `optional`
 
 ## Installation
 
@@ -65,8 +66,8 @@ func (User) Fields() []ent.Field {
 Use `entproto` to generate `.proto` files and compile them:
 
 ```bash
-# Generate proto files from Ent schema
-go generate ./...
+# Run the local Ent generator program, which installs the entproto extension
+go run ./cmd/entproto
 
 # Compile proto files (using buf or protoc)
 buf generate
@@ -80,24 +81,26 @@ Create a generator program or use the library directly:
 package main
 
 import (
-    "log"
-    "github.com/go-sphere/entc-extensions/entconv"
+	"log"
+
+	"github.com/go-sphere/entc-extensions/entconv"
 )
 
 func main() {
-    opts := &entconv.Options{
-        ProtoGoFile:     "./api/entpb/entpb.pb.go",
-        EntSchema:       "./internal/pkg/database/schema",
-        EntImportPath:   "github.com/example/project/internal/pkg/database/ent",
-        ProtoPackage:    "entpb",
-        ProtoImportPath: "github.com/example/project/api/entpb",
-        IDType:          "int64",
-        Output:          "./api/entpb/entpb_conv.go",
-    }
+	opts := &entconv.Options{
+		SchemaPath:       "./internal/pkg/database/schema",
+		EntPackagePath:   "github.com/example/project/internal/pkg/database/ent",
+		IDType:            "int64",
+		ProtoFile:         "./api/entpb/entpb.pb.go",
+		ConvPackage:       "entmap",
+		ProtoPackagePath: "github.com/example/project/api/entpb",
+		ProtoAlias:       "entpb",
+		OutDir:           "./internal/pkg/render/entmap",
+	}
 
-    if err := entconv.GenerateConverterFile(opts); err != nil {
-        log.Fatalf("Failed to generate converter: %v", err)
-    }
+	if err := entconv.GenerateConverterFile(opts); err != nil {
+		log.Fatalf("Failed to generate converter: %v", err)
+	}
 }
 ```
 
@@ -107,29 +110,32 @@ func main() {
 package main
 
 import (
-    "github.com/example/project/api/entpb"
-    "github.com/example/project/internal/pkg/database/ent"
+	"log"
+
+	"github.com/example/project/internal/pkg/database/ent"
+	"github.com/example/project/internal/pkg/render/entmap"
 )
 
 func main() {
-    // Ent entity from database
-    user := &ent.User{
-        ID:   1,
-        Name: "John Doe",
-        Age:  30,
-    }
+	// Ent entity from database
+	user := &ent.User{
+		ID:   1,
+		Name: "John Doe",
+		Age:  30,
+	}
 
-    // Convert to Protobuf message
-    pbUser, err := entpb.ToProtoUser(user)
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Convert to Protobuf message
+	pbUser, err := entmap.ToProtoUser(user)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    // Convert back to Ent entity
-    entUser, err := entpb.ToEntUser(pbUser)
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Convert back to Ent entity
+	entUser, err := entmap.ToEntUser(pbUser)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = entUser
 }
 ```
 
@@ -137,13 +143,15 @@ func main() {
 
 | Option | Required | Description | Default |
 |--------|----------|-------------|---------|
-| `ProtoGoFile` | Yes | Path to the generated `.pb.go` file | - |
-| `EntSchema` | Yes | Directory containing Ent schema definitions | - |
-| `EntImportPath` | Yes | Import path for the generated Ent package | - |
-| `Output` | Yes | Output file path for the converter code | - |
-| `ProtoPackage` | Yes | Go package name for proto types | - |
-| `ProtoImportPath` | Yes | Import path for the proto package | - |
+| `SchemaPath` | Yes | Directory containing Ent schema definitions | `./internal/pkg/database/schema` |
+| `EntPackagePath` | Yes | Import path for the generated Ent package | Current module + `/internal/pkg/database/ent` |
 | `IDType` | No | ID type for Ent schema: `int`, `int64`, `uint`, `uint64`, `string` | `int64` |
+| `ProtoFile` | Yes | Path to the generated `.pb.go` file | `./api/entpb/entpb.pb.go` |
+| `ConvPackage` | Yes | Package name for generated converters | `entmap` |
+| `ProtoPackagePath` | Yes | Import path for the protobuf Go package | Current module + `/api/entpb` |
+| `ProtoAlias` | Yes | Import alias used for protobuf types | `entpb` |
+| `OutDir` | Yes | Output directory for generated converter files | `./internal/pkg/render/entmap` |
+| `MissingProtoPolicy` | No | `strict` returns an error; `warn` generates matched types and invokes `WarningHandler` | `strict` |
 
 ## Supported Type Mappings
 
@@ -156,9 +164,10 @@ func main() {
 | `uint64` | `uint64` | Direct mapping |
 | `bool` | `bool` | Direct mapping |
 | `float64` | `double` | Direct mapping |
-| `time.Time` | `google.protobuf.Timestamp` | Requires `timestamppb` |
+| `time.Time` | `int64` | Unix seconds |
 | `[]byte` | `bytes` | Direct mapping |
 | Enum | Enum | Automatic conversion |
+| Optional nillable scalar | proto3 `optional` scalar | Nil/presence is preserved |
 
 ## Generated Code Example
 
@@ -166,14 +175,14 @@ Given a `User` entity, the following functions are generated:
 
 ```go
 // ToProtoUser converts an ent.User to a proto User message
-func ToProtoUser(e *ent.User) (*User, error)
+func ToProtoUser(e *ent.User) (*entpb.User, error)
 
 // ToEntUser converts a proto User message to an ent.User
-func ToEntUser(v *User) (*ent.User, error)
+func ToEntUser(v *entpb.User) (*ent.User, error)
 
 // Enum conversion (if applicable)
-func ToProtoUserStatus(e user.Status) User_Status
-func ToEntUserStatus(e User_Status) user.Status
+func ToProtoUserStatus(e user.Status) entpb.User_Status
+func ToEntUserStatus(e entpb.User_Status) user.Status
 ```
 
 ## Project Structure Example
@@ -182,14 +191,17 @@ func ToEntUserStatus(e User_Status) user.Status
 project/
 ├── api/
 │   └── entpb/
-│       ├── entpb.proto       # Proto definitions
-│       ├── entpb.pb.go       # Generated by protoc
-│       └── entpb_conv.go     # Generated by entconv
+│       └── entpb.pb.go       # Generated by protoc
+├── proto/
+│   └── entpb/
+│       └── entpb.proto       # Generated by entproto
 ├── internal/
 │   └── pkg/
-│       └── database/
-│           ├── ent/          # Generated Ent code
-│           └── schema/       # Ent schema definitions
+│       ├── database/
+│       │   ├── ent/          # Generated Ent code
+│       │   └── schema/       # Ent schema definitions
+│       └── render/
+│           └── entmap/       # Generated by entconv
 └── cmd/
     └── genconv/
         └── main.go           # Converter generator
@@ -212,9 +224,7 @@ go test ./...
 Run tests with the testdata example:
 
 ```bash
-cd testdata
-go generate ./...
-go run ./cmd/entconv
+make test
 ```
 
 ## License

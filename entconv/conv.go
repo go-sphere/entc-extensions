@@ -20,6 +20,7 @@ import (
 	"github.com/go-sphere/entc-extensions/entconv/internal/pkgutil"
 	"github.com/go-sphere/entc-extensions/entproto"
 	"golang.org/x/tools/imports"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 type Options struct {
@@ -146,6 +147,28 @@ type RequiredOptionError struct {
 	Field string
 }
 
+type InvalidIDTypeError struct {
+	Value string
+}
+
+func (e *InvalidIDTypeError) Error() string {
+	return fmt.Sprintf("unsupported IDType %q; valid values are int, int64, uint, uint64, and string", e.Value)
+}
+
+type ProtoFieldContractError struct {
+	Message  string
+	Field    string
+	Expected string
+	Actual   string
+}
+
+func (e *ProtoFieldContractError) Error() string {
+	if e.Actual == "" {
+		return fmt.Sprintf("proto message %s is missing field %s (expected Go type %s)", e.Message, e.Field, e.Expected)
+	}
+	return fmt.Sprintf("proto message %s field %s has Go type %s; expected %s", e.Message, e.Field, e.Actual, e.Expected)
+}
+
 func (e *RequiredOptionError) Error() string {
 	return fmt.Sprintf("required option %q is empty", e.Field)
 }
@@ -200,7 +223,10 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 		return nil, fmt.Errorf("resolving ent package: %w", err)
 	}
 
-	idType := parseIDType(opts.IDType)
+	idType, err := parseIDType(opts.IDType)
+	if err != nil {
+		return nil, err
+	}
 	g, err := loadEntGraph(opts.SchemaPath, entPkg, idType)
 	if err != nil {
 		return nil, fmt.Errorf("loading ent graph: %w", err)
@@ -230,6 +256,9 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 	adapter, err := loadAdapter(g)
 	if err != nil {
 		return nil, fmt.Errorf("loading adapter: %w", err)
+	}
+	if err := validateProtoContracts(typesToGenerate, adapter); err != nil {
+		return nil, fmt.Errorf("validating proto contract: %w", err)
 	}
 
 	return generator.New(
@@ -364,20 +393,20 @@ func getTypeName(expr ast.Expr) string {
 	return ""
 }
 
-func parseIDType(idType string) *field.TypeInfo {
+func parseIDType(idType string) (*field.TypeInfo, error) {
 	switch idType {
 	case "int":
-		return &field.TypeInfo{Type: field.TypeInt}
+		return &field.TypeInfo{Type: field.TypeInt}, nil
 	case "", "int64":
-		return &field.TypeInfo{Type: field.TypeInt64}
+		return &field.TypeInfo{Type: field.TypeInt64}, nil
 	case "uint":
-		return &field.TypeInfo{Type: field.TypeUint}
+		return &field.TypeInfo{Type: field.TypeUint}, nil
 	case "uint64":
-		return &field.TypeInfo{Type: field.TypeUint64}
+		return &field.TypeInfo{Type: field.TypeUint64}, nil
 	case "string":
-		return &field.TypeInfo{Type: field.TypeString}
+		return &field.TypeInfo{Type: field.TypeString}, nil
 	default:
-		return &field.TypeInfo{Type: field.TypeInt64}
+		return nil, &InvalidIDTypeError{Value: idType}
 	}
 }
 
@@ -400,10 +429,113 @@ func validateOptions(opts *Options) error {
 	if opts.OutDir == "" {
 		return &RequiredOptionError{Field: "OutDir"}
 	}
+	if _, err := parseIDType(opts.IDType); err != nil {
+		return err
+	}
 	if p := normalizePolicy(opts.MissingProtoPolicy); p != MissingProtoPolicyStrict && p != MissingProtoPolicyWarn {
 		return fmt.Errorf("invalid MissingProtoPolicy %q", opts.MissingProtoPolicy)
 	}
 	return nil
+}
+
+func validateProtoContracts(types []generator.TypeInfo, adapter *entproto.Adapter) error {
+	for _, typeInfo := range types {
+		fieldMap, err := adapter.FieldMap(typeInfo.Type.Name)
+		if err != nil {
+			return err
+		}
+		actualFields := make(map[string]string, len(typeInfo.Message.Fields))
+		for _, protoField := range typeInfo.Message.Fields {
+			actualFields[protoField.Name] = protoField.Type
+		}
+		for _, mapping := range fieldMap.Fields() {
+			fieldName := mapping.PbFieldName()
+			expected := expectedProtoGoType(mapping)
+			actual, ok := actualFields[fieldName]
+			if !ok {
+				return &ProtoFieldContractError{Message: typeInfo.MessageName, Field: fieldName, Expected: expected}
+			}
+			if canonicalProtoGoType(actual) != canonicalProtoGoType(expected) {
+				return &ProtoFieldContractError{
+					Message: typeInfo.MessageName, Field: fieldName, Expected: expected, Actual: actual,
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func expectedProtoGoType(mapping *entproto.FieldMappingDescriptor) string {
+	fieldDescriptor := mapping.PbFieldDescriptor
+	var name string
+	switch fieldDescriptor.GetType() {
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		name = "bool"
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
+		name = "string"
+	case descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		name = "[]byte"
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		name = "int32"
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		name = "int64"
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		name = "uint32"
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		name = "uint64"
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		name = "float32"
+	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		name = "float64"
+	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		enum := fieldDescriptor.GetEnumType()
+		name = protoDescriptorGoName(enum.GetFullyQualifiedName(), enum.GetFile().GetPackage())
+	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		message := fieldDescriptor.GetMessageType()
+		name = protoDescriptorGoName(message.GetFullyQualifiedName(), message.GetFile().GetPackage())
+	}
+	if fieldDescriptor.IsRepeated() && name != "[]byte" {
+		if fieldDescriptor.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			name = "[]*" + name
+		} else {
+			name = "[]" + name
+		}
+	} else if fieldDescriptor.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+		name = "*" + name
+	} else if fieldDescriptor.AsFieldDescriptorProto().GetProto3Optional() && name != "[]byte" {
+		name = "*" + name
+	}
+	return name
+}
+
+func protoDescriptorGoName(fullName, packageName string) string {
+	name := strings.TrimPrefix(fullName, packageName+".")
+	return strings.ReplaceAll(name, ".", "_")
+}
+
+func canonicalProtoGoType(typeName string) string {
+	prefix := ""
+	for {
+		switch {
+		case strings.HasPrefix(typeName, "[]"):
+			prefix += "[]"
+			typeName = strings.TrimPrefix(typeName, "[]")
+		case strings.HasPrefix(typeName, "*"):
+			prefix += "*"
+			typeName = strings.TrimPrefix(typeName, "*")
+		default:
+			if index := strings.LastIndex(typeName, "."); index >= 0 {
+				typeName = typeName[index+1:]
+			}
+			return prefix + typeName
+		}
+	}
 }
 
 func normalizePolicy(v MissingProtoPolicy) MissingProtoPolicy {

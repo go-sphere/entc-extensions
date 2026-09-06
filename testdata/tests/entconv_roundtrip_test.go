@@ -7,6 +7,7 @@ import (
 	"github.com/go-sphere/entc-extensions/testdata/api/entpb"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/post"
+	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/user"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/render/entbind"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/render/entmap"
 )
@@ -27,21 +28,26 @@ func TestGeneratedSymbolsExist(t *testing.T) {
 func TestEntconvRoundTrip(t *testing.T) {
 	now := time.Unix(1_723_456_789, 0).UTC()
 	entUser := &ent.User{
-		ID:       42,
-		Name:     "alice",
-		Age:      30,
-		Active:   true,
-		Score:    98.5,
-		Birthday: now,
-		Avatar:   []byte{1, 2, 3},
-		Status:   "ok",
-		Email:    "alice@example.com",
-		Balance:  128,
-		Role:     7,
-		Rank:     3,
-		Quota:    4096,
-		Tags:     []string{"staff", "beta"},
-		Points:   []int64{9, 8, 7},
+		ID:               42,
+		Name:             "alice",
+		Age:              30,
+		Active:           true,
+		Score:            98.5,
+		Birthday:         now,
+		Avatar:           []byte{1, 2, 3},
+		Status:           "ok",
+		Email:            "alice@example.com",
+		Balance:          128,
+		Role:             7,
+		Rank:             3,
+		Quota:            4096,
+		Tags:             []string{"staff", "beta"},
+		Points:           []int64{9, 8, 7},
+		OptionalBlob:     new([]byte{4, 5, 6}),
+		OptionalCount:    new(12),
+		OptionalBirthday: new(now),
+		OptionalLevel:    new(user.OptionalLevelHigh),
+		OptionalNote:     new("memo"),
 	}
 
 	pbUser, err := entmap.ToProtoUser(entUser)
@@ -67,6 +73,63 @@ func TestEntconvRoundTrip(t *testing.T) {
 	}
 	if len(backUser.Tags) != 2 || len(backUser.Points) != 3 {
 		t.Fatalf("[entconv] user json fields round-trip mismatch: tags=%v points=%v", backUser.Tags, backUser.Points)
+	}
+	if pbUser.OptionalNote == nil || *pbUser.OptionalNote != *entUser.OptionalNote {
+		t.Fatalf("[entconv] optional note was not preserved in protobuf: ent=%v pb=%v", entUser.OptionalNote, pbUser.OptionalNote)
+	}
+	if backUser.OptionalNote == nil || *backUser.OptionalNote != *entUser.OptionalNote {
+		t.Fatalf("[entconv] optional note round-trip mismatch: ent=%v back=%v", entUser.OptionalNote, backUser.OptionalNote)
+	}
+	if pbUser.OptionalBlob == nil || string(pbUser.OptionalBlob) != string(*entUser.OptionalBlob) {
+		t.Fatalf("[entconv] optional blob was not preserved in protobuf: ent=%v pb=%v", entUser.OptionalBlob, pbUser.OptionalBlob)
+	}
+	if backUser.OptionalBlob == nil || string(*backUser.OptionalBlob) != string(*entUser.OptionalBlob) {
+		t.Fatalf("[entconv] optional blob round-trip mismatch: ent=%v back=%v", entUser.OptionalBlob, backUser.OptionalBlob)
+	}
+	if pbUser.OptionalCount == nil || *pbUser.OptionalCount != int64(*entUser.OptionalCount) ||
+		backUser.OptionalCount == nil || *backUser.OptionalCount != *entUser.OptionalCount {
+		t.Fatalf("[entconv] optional numeric round-trip mismatch: ent=%v pb=%v back=%v", entUser.OptionalCount, pbUser.OptionalCount, backUser.OptionalCount)
+	}
+	if pbUser.OptionalBirthday == nil || *pbUser.OptionalBirthday != entUser.OptionalBirthday.Unix() ||
+		backUser.OptionalBirthday == nil || backUser.OptionalBirthday.Unix() != entUser.OptionalBirthday.Unix() {
+		t.Fatalf("[entconv] optional time round-trip mismatch: ent=%v pb=%v back=%v", entUser.OptionalBirthday, pbUser.OptionalBirthday, backUser.OptionalBirthday)
+	}
+	if pbUser.OptionalLevel == nil || *pbUser.OptionalLevel != entpb.User_OPTIONAL_LEVEL_HIGH ||
+		backUser.OptionalLevel == nil || *backUser.OptionalLevel != *entUser.OptionalLevel {
+		t.Fatalf("[entconv] optional enum round-trip mismatch: ent=%v pb=%v back=%v", entUser.OptionalLevel, pbUser.OptionalLevel, backUser.OptionalLevel)
+	}
+
+	withoutNote, err := entmap.ToProtoUser(&ent.User{})
+	if err != nil {
+		t.Fatalf("[entconv] ToProtoUser without optional note failed: %v", err)
+	}
+	if withoutNote == nil {
+		t.Fatal("[entconv] ToProtoUser without optional note returned nil")
+	}
+	if withoutNote.OptionalNote != nil {
+		t.Fatalf("[entconv] nil optional note became present: %q", *withoutNote.OptionalNote)
+	}
+	if withoutNote.OptionalBlob != nil {
+		t.Fatalf("[entconv] nil optional blob became present: %v", withoutNote.OptionalBlob)
+	}
+	if withoutNote.OptionalCount != nil || withoutNote.OptionalBirthday != nil || withoutNote.OptionalLevel != nil {
+		t.Fatalf("[entconv] nil optional scalar became present: count=%v birthday=%v level=%v", withoutNote.OptionalCount, withoutNote.OptionalBirthday, withoutNote.OptionalLevel)
+	}
+	backWithoutNote, err := entmap.ToEntUser(withoutNote)
+	if err != nil {
+		t.Fatalf("[entconv] ToEntUser without optional note failed: %v", err)
+	}
+	if backWithoutNote == nil {
+		t.Fatal("[entconv] ToEntUser without optional note returned nil")
+	}
+	if backWithoutNote.OptionalNote != nil {
+		t.Fatalf("[entconv] nil optional note was not preserved: %q", *backWithoutNote.OptionalNote)
+	}
+	if backWithoutNote.OptionalBlob != nil {
+		t.Fatalf("[entconv] nil optional blob was not preserved: %v", *backWithoutNote.OptionalBlob)
+	}
+	if backWithoutNote.OptionalCount != nil || backWithoutNote.OptionalBirthday != nil || backWithoutNote.OptionalLevel != nil {
+		t.Fatalf("[entconv] nil optional scalar was not preserved: count=%v birthday=%v level=%v", backWithoutNote.OptionalCount, backWithoutNote.OptionalBirthday, backWithoutNote.OptionalLevel)
 	}
 
 	entPost := &ent.Post{

@@ -1,7 +1,8 @@
 package entproto
 
 import (
-	"sort"
+	"fmt"
+	"hash/fnv"
 
 	"entgo.io/ent/entc/gen"
 	"github.com/go-viper/mapstructure/v2"
@@ -23,10 +24,17 @@ func fixNode(node *gen.Type) error {
 		node.Annotations = make(map[string]any, 1)
 	}
 	if node.Annotations[MessageAnnotation] != nil {
-		return nil
+		msg, err := extractMessageAnnotation(node)
+		if err != nil {
+			return err
+		}
+		if !msg.Generate {
+			return nil
+		}
+	} else {
+		// If the node does not have the message annotation, add it.
+		node.Annotations[MessageAnnotation] = Message()
 	}
-	// If the node does not have the message annotation, add it.
-	node.Annotations[MessageAnnotation] = Message()
 
 	exist, err := extractExistFieldID(node)
 	if err != nil {
@@ -34,22 +42,14 @@ func fixNode(node *gen.Type) error {
 	}
 	idGenerator := &fieldIDGenerator{schema: node.Name, exist: exist}
 
-	// Sort fields: own fields first, then mixed-in fields
-	sort.Slice(node.Fields, func(i, j int) bool {
-		if node.Fields[i].Position.MixedIn != node.Fields[j].Position.MixedIn {
-			return !node.Fields[i].Position.MixedIn
-		}
-		return node.Fields[i].Position.Index < node.Fields[j].Position.Index
-	})
-
 	// Add annotation for ID field
-	if err := addAnnotationForField(node.ID, idGenerator); err != nil {
+	if err := addAnnotationForID(node.ID, idGenerator); err != nil {
 		return err
 	}
 
 	// Add annotation for other fields
 	for j := range node.Fields {
-		if err := addAnnotationForField(node.Fields[j], idGenerator); err != nil {
+		if err := addAnnotationForField(node.Fields[j], idGenerator, "field"); err != nil {
 			return err
 		}
 	}
@@ -73,7 +73,7 @@ func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) error {
 	if ed.Annotations[SkipAnnotation] != nil {
 		return nil
 	}
-	num, err := idGenerator.Next(ed.Name)
+	num, err := idGenerator.Next("edge", ed.Name)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) error {
 	return nil
 }
 
-func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator) error {
+func addAnnotationForID(fd *gen.Field, idGenerator *fieldIDGenerator) error {
 	if fd.Annotations == nil {
 		fd.Annotations = make(map[string]any, 1)
 	}
@@ -92,43 +92,64 @@ func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator) error {
 		return nil
 	}
 
-	num, err := idGenerator.Next(fd.Name)
+	if _, occupied := idGenerator.exist[IDFieldNumber]; occupied {
+		return fmt.Errorf("entproto: field number %d is already occupied in schema %q; annotate the ID and conflicting field explicitly", IDFieldNumber, idGenerator.schema)
+	}
+	fd.Annotations[FieldAnnotation] = Field(IDFieldNumber)
+	idGenerator.exist[IDFieldNumber] = struct{}{}
+	return nil
+}
+
+func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator, kind string) error {
+	if fd.Annotations == nil {
+		fd.Annotations = make(map[string]any, 1)
+	}
+	if fd.Annotations[FieldAnnotation] != nil || fd.Annotations[SkipAnnotation] != nil {
+		return nil
+	}
+
+	num, err := idGenerator.Next(kind, fd.Name)
 	if err != nil {
 		return err
 	}
-
 	fd.Annotations[FieldAnnotation] = Field(num)
 	return nil
 }
 
 type fieldIDGenerator struct {
-	schema  string
-	current int
-	exist   map[int]struct{}
+	schema string
+	exist  map[int]struct{}
 }
 
-func (f *fieldIDGenerator) Next(field string) (int, error) {
-	f.current++
-	for {
-		if _, ok := f.exist[f.current]; ok {
-			f.current++
-			continue
-		}
-		if f.current > 536870911 {
-			return 0, &FieldNumberOverflowError{
-				Schema: f.schema,
-				Field:  field,
-				Number: f.current,
-			}
-		}
-		break
+func (f *fieldIDGenerator) Next(kind, field string) (int, error) {
+	num := stableFieldNumber(f.schema, kind, field)
+	if _, occupied := f.exist[num]; occupied {
+		return 0, fmt.Errorf(
+			"entproto: stable field number %d for %s %q in schema %q is already occupied; annotate the colliding members explicitly",
+			num, kind, field, f.schema,
+		)
 	}
-	return f.current, nil
+	f.exist[num] = struct{}{}
+	return num, nil
+}
+
+func stableFieldNumber(schema, kind, field string) int {
+	h := fnv.New32a()
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s", schema, kind, field)
+	// Map into protobuf's valid user range while keeping 1 reserved for the ID.
+	num := int(h.Sum32()%uint32(536870911-1)) + 2
+	if num >= 19000 && num <= 19999 {
+		num += 1000
+	}
+	return num
 }
 
 func extractExistFieldID(node *gen.Type) (map[int]struct{}, error) {
 	existNums := map[int]struct{}{}
-	for _, fd := range node.Fields {
+	fields := make([]*gen.Field, 0, len(node.Fields)+1)
+	fields = append(fields, node.ID)
+	fields = append(fields, node.Fields...)
+	for _, fd := range fields {
 		if fd.Annotations != nil {
 			if obj, exist := fd.Annotations[FieldAnnotation]; exist {
 				pbField := struct {

@@ -22,6 +22,8 @@ func main() {
 			entpb.User{},
 			[]any{ent.UserCreate{}, ent.UserUpdateOne{}},
 			conf.WithCustomFieldConverter(user.FieldBirthday, conv.ToEntUserBirthday),
+			conf.WithCustomFieldConverter(user.FieldOptionalBirthday, conv.ToEntUserBirthday),
+			conf.WithCustomFieldConverter(user.FieldOptionalLevel, entmap.ToEntUser_OptionalLevel),
 		),
 		conf.NewEntity(
 			ent.Post{},

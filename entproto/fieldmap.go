@@ -3,10 +3,10 @@ package entproto
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"entgo.io/ent/entc/gen"
 	"github.com/jhump/protoreflect/desc" //nolint:staticcheck // Adapter APIs still expose jhump v1 descriptors.
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 // FieldMap returns a FieldMap containing descriptors of all of the mappings between the ent schema field
@@ -98,22 +98,18 @@ func (d *FieldMappingDescriptor) PbStructField() string {
 
 // PbFieldName returns the PascalCase name of the protobuf field (for Go field access).
 func (d *FieldMappingDescriptor) PbFieldName() string {
-	return toPascalCase(d.PbFieldDescriptor.GetName())
+	return camelCase(d.PbFieldDescriptor.GetName())
 }
 
-// toPascalCase converts a snake_case string to PascalCase.
-func toPascalCase(s string) string {
-	if s == "" {
-		return s
-	}
-	// Convert snake_case to PascalCase by splitting on underscore and capitalizing each part
-	parts := strings.Split(s, "_")
-	for i, part := range parts {
-		if len(part) > 0 {
-			parts[i] = strings.ToUpper(part[:1]) + part[1:]
-		}
-	}
-	return strings.Join(parts, "")
+func (d *FieldMappingDescriptor) IsProto3Optional() bool {
+	return d.PbFieldDescriptor.AsFieldDescriptorProto().GetProto3Optional()
+}
+
+// IsProto3OptionalPointer reports whether protoc-gen-go represents this
+// proto3 optional field with a pointer. Optional bytes retain their native
+// []byte representation and use nil for absence.
+func (d *FieldMappingDescriptor) IsProto3OptionalPointer() bool {
+	return d.IsProto3Optional() && d.PbFieldDescriptor.GetType() != descriptorpb.FieldDescriptorProto_TYPE_BYTES
 }
 
 // EdgeIDPbStructField returns the name for the id field  of the
@@ -125,7 +121,7 @@ func (d *FieldMappingDescriptor) EdgeIDPbStructField() string {
 // EdgeIDPbStructFieldDesc returns the protobuf field descriptor for the id field
 // of the entity this edge refers to.
 func (d *FieldMappingDescriptor) EdgeIDPbStructFieldDesc() *desc.FieldDescriptor {
-	field := toPascalCase(d.EntEdge.Type.ID.Name)
+	field := camelCase(d.EntEdge.Type.ID.Name)
 	return d.ReferencedPbType.FindFieldByName(snake(field))
 }
 

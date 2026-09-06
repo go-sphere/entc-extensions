@@ -1,6 +1,6 @@
 # entproto
 
-`entproto` is a library and CLI tool to facilitate the generation of `.proto` files from an `ent.Schema`.
+`entproto` is an Ent code-generation extension that generates `.proto` files from an `ent.Schema`.
 
 This is a fork of [ent/contrib/entproto](https://github.com/ent/contrib/tree/master/entproto) with the following modifications:
 - Removed `protoc-gen-entgrpc` (gRPC service implementation generator)
@@ -15,7 +15,7 @@ This is a fork of [ent/contrib/entproto](https://github.com/ent/contrib/tree/mas
 Prerequisites:
 
 - Install `protoc`: https://grpc.io/docs/protoc-installation/
-- Install `protoc-gen-go` and `protoc-gen-go-grpc`: https://grpc.io/docs/languages/go/quickstart/
+- Install `protoc-gen-go`: https://protobuf.dev/reference/go/go-generated/
 
 Download the module:
 
@@ -39,14 +39,17 @@ import (
 )
 
 func main() {
+	ext, err := entproto.NewExtension(
+		entproto.WithProtoDir("./proto"),
+		entproto.WithAutoFill(),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	err := entc.Generate("./schema", &gen.Config{
 		Target: "./ent",
-	}, entc.Extensions(
-		entproto.NewExtension(
-			entproto.WithProtoDir("./proto"),
-			entproto.WithAutoFill(), // Enable automatic annotation generation
-		),
-	))
+	}, entc.Extensions(ext))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -55,8 +58,10 @@ func main() {
 
 **How `WithAutoFill()` works:**
 - Schemas without `entproto.Message()` annotation automatically get one
-- Fields/edges without `entproto.Field()` annotation are assigned auto-generated field numbers (ID field uses 1, others start from 2)
+- Fields/edges without `entproto.Field()` annotation are assigned deterministic numbers derived from the schema, member kind, and member name (the ID field uses 1)
 - No need to manually annotate every schema and field
+
+The generated number for an existing field does not change when another field is inserted or declarations are reordered. Renaming a field changes its identity, so pin its previous number with `entproto.Field(number)` before renaming. The generator reports the rare case where two members derive the same number instead of silently producing an invalid schema.
 
 ### Option 2: Manual Annotations
 
@@ -90,10 +95,10 @@ func (User) Fields() []ent.Field {
 }
 ```
 
-Run the code generation:
+Run the generator program that calls `entc.Generate`:
 
 ```console
-go run github.com/go-sphere/entc-extensions/entproto/cmd/entproto -path ./ent/schema
+go run ./cmd/entproto
 ```
 
 The proto file is generated under `./ent/proto/entpb/entpb.proto`:
@@ -107,21 +112,21 @@ package entpb;
 option go_package = "github.com/go-sphere/entc-extensions/testdata/api/entpb";
 
 message User {
-  int32 id = 1;
+  int64 id = 1;
 
   string user_name = 2;
 }
 ```
 
-To generate the Go files from the `.proto` file run:
+To generate the Go files from the `.proto` file with the repository's Buf configuration, run:
 
 ```console
-go generate ./ent/proto/...
+buf generate
 ```
 
-## Programmatic code-generation
+## Programmatic code generation
 
-To programmatically invoke `entproto` from a custom `entc.Generate` call, `entproto` can be used as a `gen.Hook`. For example:
+Use the extension from a custom `entc.Generate` program:
 
 ```go
 package main
@@ -135,12 +140,13 @@ import (
 )
 
 func main() {
+	ext, err := entproto.NewExtension(entproto.WithProtoDir("./proto"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	err := entc.Generate("./ent/schema", &gen.Config{
-		Hooks: []gen.Hook{
-			// Run entproto codegen in addition to normal ent codegen.
-			entproto.Hook(),
-		},
-	})
+		Target: "./ent",
+	}, entc.Extensions(ext))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -159,7 +165,7 @@ type User struct {
 }
 
 func (User) Annotations() []schema.Annotation {
-	return []schema.Annotation{proto.Message()}
+	return []schema.Annotation{entproto.Message()}
 }
 ```
 
@@ -216,7 +222,7 @@ The ID field is added to the generated message as well, in the above example it 
 
 ```proto
 message User {
-  int32 id = 1;
+  int64 id = 1;
   string name = 2
 }
 ```
@@ -236,7 +242,7 @@ Field type mappings:
 | TypeInt8       | int32                     |                                                                                                                                                                             |
 | TypeInt16      | int32                     |                                                                                                                                                                             |
 | TypeInt32      | int32                     |                                                                                                                                                                             |
-| TypeInt        | int32                     |                                                                                                                                                                             |
+| TypeInt        | int64                     |                                                                                                                                                                             |
 | TypeInt64      | int64                     |                                                                                                                                                                             |
 | TypeUint8      | uint32                    |                                                                                                                                                                             |
 | TypeUint16     | uint32                    |                                                                                                                                                                             |
@@ -254,13 +260,13 @@ Validations:
 
 #### Custom Fields
 
-In some edge cases, it may be required to override the automatic ent <> proto type mapping.
-This can be done by using the `entproto.OverrideType`, field option:
+In some edge cases, it may be required to override the automatic Ent-to-proto type mapping.
+Use the `entproto.Type` field option:
 
 ```go
 field.Uint8("custom_pb").
     Annotations(
-        proto.Field(12,
+        entproto.Field(12,
             entproto.Type(descriptorpb.FieldDescriptorProto_TYPE_UINT64),
         ),
     )
@@ -268,15 +274,17 @@ field.Uint8("custom_pb").
 
 ### Proto3 Optional Support
 
-This fork adds native support for proto3's `optional` keyword. You can enable it using the `Optional` field option:
+An Ent scalar field declared with both `Optional()` and `Nillable()` is emitted as a proto3 `optional` field. This keeps absence distinct from the scalar zero value in generated Go code:
 
 ```go
 func (User) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("name").
-			Annotations(proto.Field(2)),
-		field.OptionalString("nickname").
-			Annotations(proto.Field(3, proto.Optional())),
+			Annotations(entproto.Field(2)),
+		field.String("nickname").
+			Optional().
+			Nillable().
+			Annotations(entproto.Field(3)),
 	}
 }
 ```
@@ -291,40 +299,30 @@ message User {
 }
 ```
 
-The `Optional()` function accepts an optional `entproto.OptionalType` parameter to specify how the field should be handled when the value is not set:
-
-- `entproto.OptionalTypeDefault` (default): The field uses the standard proto3 behavior (zero value for primitives)
-- `entproto.OptionalTypePointer`: The field uses a pointer type in Go (e.g., `*string` instead of `string`)
-
-```go
-// Generates: optional string nickname = 3;
-// In Go: *string instead of string
-field.OptionalString("nickname").
-    Annotations(proto.Field(3, proto.Optional(entproto.OptionalTypePointer)))
-```
+`protoc-gen-go` represents this field as `*string`. `entconv` preserves both nil and non-nil values in either conversion direction. An Ent field that is only `Optional()` retains ordinary proto3 scalar zero-value semantics.
 
 For enum fields:
 
 ```go
 field.Enum("status").
-    Values("pending", "done").
-    Default("pending").
-    Optional().
-    Annotations(
-        proto.Field(4),
-        proto.Optional(),
-        proto.Enum(map[string]int32{
-            "pending": 0,
-            "done":    1,
-        }),
-    )
+	Values("pending", "done").
+	Default("pending").
+	Optional().
+	Nillable().
+	Annotations(
+		entproto.Field(4),
+		entproto.Enum(map[string]int32{
+			"pending": 0,
+			"done":    1,
+		}),
+	)
 ```
 
 ### entproto.Enum
 
 Proto Enum options, similar to message fields are assigned a numeric identifier that is expected to remain stable through all versions. This means, that a specific Ent Enum field option must always be translated to the same numeric identifier across the re-generation of the export code.
 
-To accommodate this, we add an additional annotation (proto.Enum) that maps between the Ent Enum options and their desired proto identifier:
+To accommodate this, we add an additional annotation (`entproto.Enum`) that maps between the Ent Enum options and their desired proto identifier:
 
 ```go
 
@@ -332,13 +330,13 @@ To accommodate this, we add an additional annotation (proto.Enum) that maps betw
 func (Todo) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("task").
-			Annotations(proto.Field(2)),
+			Annotations(entproto.Field(2)),
 		field.Enum("status").
 			Values("pending", "in_progress", "done").
 			Default("pending").
 			Annotations(
-				proto.Field(3),
-				proto.Enum(map[string]int32{
+				entproto.Field(3),
+				entproto.Enum(map[string]int32{
 					"pending":     0,
 					"in_progress": 1,
 					"done":        2,
@@ -373,7 +371,7 @@ message Todo {
 As per the proto3 language guide for enums, the zero value (default) must always be specified.
 The Proto Style Guide suggests that we use `CAPS_WITH_UNDERSCORES` for value names, and a suffix of `_UNSPECIFIED` to the zero value. Ent supports specifying default values for Enum fields. We map this to proto enums in the following manner:
 
-- If no default value is defined for the enum, we generate a `<MessageName>_UNSPECIFIED = 0;` option on the enum and verify that no option received the 0 number in the proto.Enum Options field.
+- If no default value is defined for the enum, we generate a `<MessageName>_UNSPECIFIED = 0;` option on the enum and verify that no option received the 0 number in the `entproto.Enum` options field.
 - If a default value is defined for the enum, we verify that it receives the 0 value on the Options field.
 
 Ent allows special characters in enum values. For such values, any special character is replaced by an underscore to preserve the `CAPS_WITH_UNDERSCORES` protobuf format.
@@ -388,19 +386,19 @@ func (BlogPost) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.To("author", User.Type).
 			Unique().
-			Annotations(proto.Field(4)),
+			Annotations(entproto.Field(4)),
 		edge.From("categories", Category.Type).
 			Ref("blog_posts").
-			Annotations(proto.Field(5)),
+			Annotations(entproto.Field(5)),
 	}
 }
 
 func (BlogPost) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("title").
-			Annotations(proto.Field(2)),
+			Annotations(entproto.Field(2)),
 		field.String("body").
-			Annotations(proto.Field(3)),
+			Annotations(entproto.Field(3)),
 	}
 }
 ```
@@ -409,7 +407,7 @@ Is transformed to:
 
 ```protobuf
 message BlogPost {
-  int32 id = 1;
+  int64 id = 1;
   string title = 2;
   string body = 3;
   User author = 4;
@@ -425,5 +423,4 @@ Validation:
 
 #### Code generation
 
-Please re-generate all code using `go generate ./...` before checking code in - CI will fail
-on this check otherwise.
+Regenerate and verify the complete fixture pipeline with `make test` before submitting changes.

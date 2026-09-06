@@ -80,7 +80,20 @@ func TestCreateDir(t *testing.T) {
 		t.Error("Expected directory")
 	}
 
-	// Test with removeBeforeGenerate = true
+	generatedFile := filepath.Join(testDir, "generated.go")
+	if err := os.WriteFile(generatedFile, []byte(generatedHeader+"\npackage generated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	userFile := filepath.Join(testDir, "user.go")
+	if err := os.WriteFile(userFile, []byte("package user\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	noteFile := filepath.Join(testDir, "notes.txt")
+	if err := os.WriteFile(noteFile, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cleanup removes only files owned by this generator.
 	err = CreateDir(testDir, true)
 	if err != nil {
 		t.Errorf("CreateDir with remove failed: %v", err)
@@ -95,10 +108,32 @@ func TestCreateDir(t *testing.T) {
 	if !info.IsDir() {
 		t.Error("Expected directory after remove")
 	}
+	if _, err := os.Stat(generatedFile); !os.IsNotExist(err) {
+		t.Fatalf("generated file still exists or stat failed: %v", err)
+	}
+	for _, fileName := range []string{userFile, noteFile} {
+		if _, err := os.Stat(fileName); err != nil {
+			t.Fatalf("non-generated file %q was removed: %v", fileName, err)
+		}
+	}
 
 	// Test empty dir returns error
 	err = CreateDir("", false)
 	if err == nil {
 		t.Error("Expected error for empty directory")
+	}
+}
+
+func TestCreateDir_RejectsSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "output")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateDir(link, true); err == nil {
+		t.Fatal("expected symlinked output directory to be rejected")
 	}
 }
