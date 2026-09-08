@@ -34,6 +34,8 @@ message Post {
 
   uint32 shares = 8;
 
+  IPV4 ip_v4 = 10;
+
   User author = 9;
 
   enum Status {
@@ -44,6 +46,14 @@ message Post {
     STATUS_IN_PROGRESS = 2;
 
     STATUS_DONE = 3;
+  }
+
+  enum IPV4 {
+    IP_V4_UNSPECIFIED = 0;
+
+    IP_V4_LOW = 1;
+
+    IP_V4_HIGH = 2;
   }
 }
 

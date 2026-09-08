@@ -44,6 +44,19 @@ func (Post) Fields() []ent.Field {
 			Annotations(entproto.Field(7)),
 		field.Uint32("shares").
 			Annotations(entproto.Field(8)),
+		// Divergent-name enum: entproto derives the enum type as IPV4 (pascal)
+		// but its proto values as IP_V4_* (snake). protoc-gen-go therefore emits
+		// Post_IP_V4_*, not Post_IPV4_*. This guards the constant-name resolution
+		// against re-deriving names from conventions (RF-202/203).
+		field.Enum("ip_v4").
+			Values("low", "high").
+			Annotations(
+				entproto.Field(10),
+				entproto.Enum(map[string]int32{
+					"low":  1,
+					"high": 2,
+				}),
+			),
 	}
 }
 

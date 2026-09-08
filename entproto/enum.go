@@ -107,6 +107,19 @@ func (e *enum) Verify(fld *gen.Field) error {
 	return nil
 }
 
+// EnumValueNumber returns the protobuf number configured for the ent enum value
+// `value` on fld via the entproto.Enum annotation. It lets consumers resolve the
+// real protobuf value descriptor (and therefore its generated Go constant name)
+// instead of re-deriving it from naming conventions.
+func EnumValueNumber(fld *gen.Field, value string) (int32, bool) {
+	ann, err := extractEnumAnnotation(fld)
+	if err != nil {
+		return 0, false
+	}
+	n, ok := ann.Options[value]
+	return n, ok
+}
+
 func extractEnumAnnotation(fld *gen.Field) (*enum, error) {
 	annot, ok := fld.Annotations[EnumAnnotation]
 	if !ok {

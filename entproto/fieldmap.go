@@ -105,6 +105,36 @@ func (d *FieldMappingDescriptor) IsProto3Optional() bool {
 	return d.PbFieldDescriptor.AsFieldDescriptorProto().GetProto3Optional()
 }
 
+// PbEnumValueConstName returns the Go constant name protoc-gen-go emits for the
+// protobuf enum value that corresponds to the ent enum value `value`. The
+// protobuf value descriptor is resolved through the entproto.Enum annotation's
+// configured number, so the name is read from the real descriptor instead of
+// being re-derived from naming conventions (which diverge for names such as
+// ip_v4 or api_v2). protoc-gen-go names a value nested in message M as
+// "M_<proto value name>", and enum value names are not camel-cased.
+func (d *FieldMappingDescriptor) PbEnumValueConstName(value string) (string, error) {
+	if d.EntField == nil {
+		return "", fmt.Errorf("entproto: enum field %q has no ent field mapping", d.PbFieldDescriptor.GetName())
+	}
+	enum := d.PbFieldDescriptor.GetEnumType()
+	if enum == nil {
+		return "", fmt.Errorf("entproto: field %q is not an enum", d.PbFieldDescriptor.GetName())
+	}
+	number, ok := EnumValueNumber(d.EntField, value)
+	if !ok {
+		return "", fmt.Errorf("entproto: ent enum value %q on field %q has no protobuf number annotation", value, d.EntField.Name)
+	}
+	vd := enum.FindValueByNumber(number)
+	if vd == nil {
+		return "", fmt.Errorf("entproto: proto enum %s has no value numbered %d (ent value %q)", enum.GetName(), number, value)
+	}
+	prefix := enum.GetName()
+	if md, ok := enum.GetParent().(*desc.MessageDescriptor); ok {
+		prefix = md.GetName()
+	}
+	return prefix + "_" + vd.GetName(), nil
+}
+
 // IsProto3OptionalPointer reports whether protoc-gen-go represents this
 // proto3 optional field with a pointer. Optional bytes retain their native
 // []byte representation and use nil for absence.

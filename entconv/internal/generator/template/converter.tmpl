@@ -11,29 +11,21 @@
 {{ $enumName := printf "%s_%s" $typeInfo.Type.Name $enumType.GetName }}
 {{ $pbEnumIdent := protoIdent $enumName }}
 {{ $entLcase := camel $typeInfo.Type.Name }}
-{{ $entEnumIdent := entIdent $entLcase (.PbStructField | pascal) }}
-{{ $enumFieldPrefix := printf "%s_" (upper (snake $enumType.GetName)) }}
-{{ $omitPrefix := .EntField.Annotations.ProtoEnum.OmitFieldPrefix }}
-{{ $pbConstPrefix := printf "%s_" $typeInfo.Type.Name }}
+{{ $entEnumIdent := entIdent $entLcase (.EntField.Name | pascal) }}
+{{ $mapping := . }}
 
 var (
     // toProto{{ $enumName }}Map maps Ent enum values to Protobuf enum values
     toProto{{ $enumName }}Map = map[{{ ident $entEnumIdent }}]{{ ident $pbEnumIdent }}{
     {{- range .EntField.Enums }}
-    {{- $constName := printf "%s_" $typeInfo.Type.Name }}
-    {{- if not $omitPrefix }}{{ $constName = printf "%s%s" $constName $enumFieldPrefix }}{{ end }}
-    {{- $constName = printf "%s%s" $constName (protoIdentNormalize .Value) }}
-        {{ ident $entEnumIdent }}{{ camel .Value | pascal }}: {{ protoIdent $constName }},
+        {{ entIdent $entLcase (entEnumConst $mapping.EntField .Value) }}: {{ protoIdent (pbEnumConst $mapping .Value) }},
     {{- end }}
     }
 
     // toEnt{{ $enumName }}Map maps Protobuf enum values to Ent enum values
     toEnt{{ $enumName }}Map = map[{{ ident $pbEnumIdent }}]{{ ident $entEnumIdent }}{
     {{- range .EntField.Enums }}
-    {{- $constName := printf "%s_" $typeInfo.Type.Name }}
-    {{- if not $omitPrefix }}{{ $constName = printf "%s%s" $constName $enumFieldPrefix }}{{ end }}
-    {{- $constName = printf "%s%s" $constName (protoIdentNormalize .Value) }}
-        {{ protoIdent $constName }}: {{ ident $entEnumIdent }}{{ camel .Value | pascal }},
+        {{ protoIdent (pbEnumConst $mapping .Value) }}: {{ entIdent $entLcase (entEnumConst $mapping.EntField .Value) }},
     {{- end }}
     }
 )

@@ -187,3 +187,28 @@ func TestCreateOptionsFileRewritesOnlyPackageDeclaration(t *testing.T) {
 		t.Fatalf("generated file still contains the original package declaration:\n%s", got)
 	}
 }
+
+type noFieldsSource struct{ Name string }
+
+type noFieldsTarget struct{}
+
+type noFieldsAction struct{}
+
+func (noFieldsAction) SetName(string) {}
+
+// TestGenBindFunc_NoBindableFieldsOmitsUnusedOption ensures an entity whose
+// target shares no field with the source does not emit an unused `option`
+// variable (which would fail to compile).
+func TestGenBindFunc_NoBindableFieldsOmitsUnusedOption(t *testing.T) {
+	entity := conf.NewEntity(noFieldsSource{}, noFieldsTarget{}, []any{noFieldsAction{}})
+	code, err := GenBindFunc(noFieldsAction{}, entity, nil, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc failed: %v", err)
+	}
+	if strings.Contains(code, "option := NewBindOptions") {
+		t.Fatalf("generated code declares unused option variable:\n%s", code)
+	}
+	if !strings.Contains(code, "return source") {
+		t.Fatalf("generated code should still return source:\n%s", code)
+	}
+}

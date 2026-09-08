@@ -17,6 +17,7 @@ import (
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
+	"github.com/go-sphere/entc-extensions/entconv/internal/converter"
 	"github.com/go-sphere/entc-extensions/entconv/internal/generator"
 	"github.com/go-sphere/entc-extensions/entconv/internal/pkgutil"
 	"github.com/go-sphere/entc-extensions/entproto"
@@ -235,7 +236,7 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 	// Fail fast when the IDType option diverges from the real generated ent
 	// structs (when they are available on disk). Without this check the
 	// generator can emit converters that do not compile.
-	if err := verifyIDTypesAgainstSource(g, opts.SchemaPath); err != nil {
+	if err := verifyIDTypesAgainstSource(g, opts.SchemaPath, entPkg); err != nil {
 		return nil, err
 	}
 
@@ -492,6 +493,12 @@ func validateProtoContracts(types []generator.TypeInfo, adapter *entproto.Adapte
 			if err := validateMessageFieldEntShape(typeInfo, mapping, expected); err != nil {
 				return err
 			}
+			// Fail before any file is written when a field's custom Go type has
+			// no template-renderable conversion; otherwise the generator would
+			// emit an identity assignment that does not compile.
+			if _, err := converter.NewConverter(mapping, typeInfo.Type.Name); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -624,28 +631,29 @@ func (e *EnumConstMissingError) Error() string {
 
 // validateEnumConstReferences verifies that every protobuf enum constant the
 // converter template will reference actually exists in the parsed .pb.go file.
-// Without this check a naming drift between entproto's enum-value generation
-// and the converter template's constant derivation would silently produce code
-// that does not compile.
+// The constant name is resolved from the real protobuf enum descriptor (via the
+// entproto.Enum number annotation), so this cannot diverge from protoc-gen-go's
+// output the way a re-derived name would.
 func validateEnumConstReferences(types []generator.TypeInfo, adapter *entproto.Adapter, consts map[string]struct{}) error {
 	for _, typeInfo := range types {
 		fieldMap, err := adapter.FieldMap(typeInfo.Type.Name)
 		if err != nil {
 			return err
 		}
-		enums := fieldMap.Enums()
-		for _, mapping := range enums {
+		for _, mapping := range fieldMap.Enums() {
 			entField := mapping.EntField
 			if entField == nil {
 				continue
 			}
-			enumType := mapping.PbFieldDescriptor.GetEnumType()
-			if enumType == nil {
-				continue
-			}
-			omitPrefix := enumAnnotationOmitPrefix(entField)
 			for _, opt := range entField.Enums {
-				constName := pbEnumConstName(typeInfo.Type.Name, enumType.GetName(), opt.Value, omitPrefix)
+				constName, err := mapping.PbEnumValueConstName(opt.Value)
+				if err != nil {
+					return &EnumConstMissingError{
+						Message: typeInfo.MessageName,
+						Field:   mapping.PbFieldDescriptor.GetName(),
+						Const:   err.Error(),
+					}
+				}
 				if _, ok := consts[constName]; !ok {
 					return &EnumConstMissingError{
 						Message: typeInfo.MessageName,
@@ -657,33 +665,4 @@ func validateEnumConstReferences(types []generator.TypeInfo, adapter *entproto.A
 		}
 	}
 	return nil
-}
-
-// enumAnnotationOmitPrefix mirrors the converter template's access to the
-// entproto.Enum annotation's OmitFieldPrefix flag.
-func enumAnnotationOmitPrefix(f *gen.Field) bool {
-	if f == nil || f.Annotations == nil {
-		return false
-	}
-	v, ok := f.Annotations[entproto.EnumAnnotation]
-	if !ok {
-		return false
-	}
-	// The annotation travels as a decoded map[string]any (JSON round-trip).
-	if m, ok := v.(map[string]any); ok {
-		b, _ := m["OmitFieldPrefix"].(bool)
-		return b
-	}
-	return false
-}
-
-// pbEnumConstName derives the Go constant name protoc-gen-go emits for a
-// protobuf enum value of message `messageName`/enum `enumName`. It must stay in
-// lockstep with the converter template and entproto's enum value naming.
-func pbEnumConstName(messageName, enumName, value string, omitPrefix bool) string {
-	name := messageName + "_"
-	if !omitPrefix {
-		name += strings.ToUpper(gen.Funcs["snake"].(func(string) string)(enumName)) + "_"
-	}
-	return name + entproto.NormalizeEnumIdentifier(value)
 }

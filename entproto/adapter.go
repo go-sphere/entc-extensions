@@ -246,8 +246,48 @@ func (a *Adapter) linkDependencyError() error {
 				}
 			}
 		}
+		for _, f := range genType.Fields {
+			ref := a.fieldReferencedSchema(f)
+			if ref == "" {
+				continue
+			}
+			if _, failed := a.errors[ref]; failed {
+				return &DanglingReferenceError{
+					Schema:    genType.Name,
+					Field:     f.Name,
+					RefSchema: ref,
+					Cause:     a.errors[ref],
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// fieldReferencedSchema returns the name of a schema referenced by a
+// message/enum-typed field annotation, or "" when the field does not reference a
+// graph schema. External custom types registered via RegisterCustomType are not
+// graph schemas and are ignored.
+func (a *Adapter) fieldReferencedSchema(f *gen.Field) string {
+	if f == nil || f.Annotations == nil {
+		return ""
+	}
+	if _, ok := f.Annotations[FieldAnnotation]; !ok {
+		return ""
+	}
+	ann, err := extractFieldAnnotation(f)
+	if err != nil || ann.TypeName == "" {
+		return ""
+	}
+	if ann.Type != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
+		ann.Type != descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+		return ""
+	}
+	name := protoTypeShortName(ann.TypeName)
+	if _, ok := a.nodeByName[name]; ok {
+		return name
+	}
+	return ""
 }
 
 // GetFileDescriptor returns the proto file descriptor containing the transformed proto message descriptor for

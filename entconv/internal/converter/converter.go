@@ -130,7 +130,54 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 	default:
 		return nil, fmt.Errorf("entproto: no mapping to ent field type %q", efld.Type.ConstName())
 	}
+	if out.hasUnrenderedDirective() && !out.hasRenderableDirective() {
+		return nil, &UnsupportedEntGoTypeError{
+			Field:   efld.Name,
+			EntType: efld.Type.String(),
+		}
+	}
 	return out, nil
+}
+
+// hasRenderableDirective reports whether the converter carries at least one
+// directive the converter template actually renders. When one is present the
+// field converts correctly, even if unrendered directives were also computed.
+func (c *Converter) hasRenderableDirective() bool {
+	return c.ToProtoConversion != "" ||
+		c.ToProtoConversionModifier != "" ||
+		c.ToProtoConstructor != "" ||
+		c.ToEntConversion != "" ||
+		c.ToEntConstructor != ""
+}
+
+// hasUnrenderedDirective reports whether the converter computed a directive that
+// the converter template does not consume. These directives exist for custom Go
+// types (driver.Valuer, sql.Scanner, encoding.BinaryMarshaler), and the fork's
+// template dropped their rendering, so a field relying only on one would
+// otherwise degrade to an identity assignment that does not compile.
+func (c *Converter) hasUnrenderedDirective() bool {
+	return c.ToEntScannerConversion != "" ||
+		c.ToEntMarshallerConstructor != "" ||
+		c.ToEntScannerConstructor != "" ||
+		c.ToEntModifier != "" ||
+		c.ToProtoValuer != "" ||
+		c.ToProtoMarshallerConstructor != ""
+}
+
+// UnsupportedEntGoTypeError reports that an ent field's custom Go type cannot be
+// converted by the generated converter template. It is returned at generation
+// time instead of emitting code that does not compile.
+type UnsupportedEntGoTypeError struct {
+	Field   string
+	EntType string
+}
+
+func (e *UnsupportedEntGoTypeError) Error() string {
+	return fmt.Sprintf(
+		"entproto: ent field %q has Go type %s which the converter cannot translate; "+
+			"map it with entproto.Type/TypeName or remove the custom GoType",
+		e.Field, e.EntType,
+	)
 }
 
 // Supported value scanner types (https://golang.org/pkg/database/sql/driver/#Value): [int64, float64, bool, []byte, string, time.Time]

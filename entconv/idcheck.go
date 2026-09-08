@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"entgo.io/ent/entc/gen"
+	"github.com/go-sphere/entc-extensions/entconv/internal/pkgutil"
 )
 
 // IDTypeMismatchError reports a divergence between the ID type assumed by
@@ -41,12 +42,12 @@ func (e *IDTypeMismatchError) Error() string {
 // source cannot be located (e.g. it has not been generated yet), in which case
 // the IDType option remains the single source of truth.
 //
-// The entc default layout is <project>/ent/schema -> <project>/ent, so the ent
-// package directory is derived as a sibling of the schema directory. When the
-// schema directory is not named "schema", a direct sibling named "ent" is still
-// attempted as a best effort.
-func verifyIDTypesAgainstSource(g *gen.Graph, schemaDir string) error {
-	entDir := entDirBesideSchema(schemaDir)
+// The ent package directory is resolved from entPackage (the configured import
+// path, mapped onto disk) first, falling back to a sibling "ent" directory
+// (covers the entc default layout <project>/ent/schema -> <project>/ent and the
+// <project>/<pkg>/database/{schema,ent} layout).
+func verifyIDTypesAgainstSource(g *gen.Graph, schemaDir, entPackage string) error {
+	entDir := resolveEntDir(schemaDir, entPackage)
 	if entDir == "" {
 		return nil
 	}
@@ -70,9 +71,23 @@ func verifyIDTypesAgainstSource(g *gen.Graph, schemaDir string) error {
 	return nil
 }
 
+// resolveEntDir returns the on-disk directory of the generated ent package.
+// It prefers the configured ent import path (which handles the entc default
+// <project>/ent/schema layout where a naive sibling lookup would look for
+// <project>/ent/ent), then falls back to a sibling "ent" directory.
+func resolveEntDir(schemaDir, entPackage string) string {
+	if entPackage != "" {
+		if dir, err := pkgutil.DiskDirForImportPath(schemaDir, entPackage); err == nil {
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				return dir
+			}
+		}
+	}
+	return entDirBesideSchema(schemaDir)
+}
+
 // entDirBesideSchema returns the directory of the generated ent package when it
-// sits next to the schema directory (the entc default layout:
-// <project>/ent/schema -> <project>/ent). Empty when undeterminable.
+// sits next to the schema directory. Empty when undeterminable.
 func entDirBesideSchema(schemaDir string) string {
 	abs, err := filepath.Abs(schemaDir)
 	if err != nil {
@@ -85,16 +100,31 @@ func entDirBesideSchema(schemaDir string) string {
 	return ""
 }
 
-// structIDType parses the generated ent source file for typeName and returns the
-// declared type of its ID field.
+// structIDType parses the generated ent source files in entDir and returns the
+// declared type of typeName's ID field. It scans every .go file rather than
+// assuming entc's lower-cased file naming, so custom layouts keep working.
 func structIDType(entDir, typeName string) (string, bool) {
-	// entc writes each type to a lower-cased file name (user.go, userprofile.go).
-	file := filepath.Join(entDir, strings.ToLower(typeName)+".go")
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, file, nil, 0)
+	entries, err := os.ReadDir(entDir)
 	if err != nil {
 		return "", false
 	}
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(entDir, entry.Name()), nil, 0)
+		if err != nil {
+			continue
+		}
+		if idType, ok := structIDTypeInFile(f, typeName); ok {
+			return idType, true
+		}
+	}
+	return "", false
+}
+
+func structIDTypeInFile(f *ast.File, typeName string) (string, bool) {
 	for _, decl := range f.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.TYPE {

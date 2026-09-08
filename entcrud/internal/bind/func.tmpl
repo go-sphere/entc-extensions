@@ -1,6 +1,8 @@
 {{- /* gotype: . */ -}}
 func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.TargetPkgName}}.{{.TargetName}}, options ...Option) *{{.SourcePkgName}}.{{.ActionName}} {
+{{- if .Fields}}
 	option := NewBindOptions(options...)
+{{- end}}
 {{- range .Fields}}
 	if option.CanSetField({{.FieldKeyPath}}) {
 		{{- if .HasCustomConverter}}

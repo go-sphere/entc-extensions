@@ -1,6 +1,6 @@
 # entconv
 
-[![Go Version](https://img.shields.io/badge/go-%3E%3D1.23-blue)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-%3E%3D1.26-blue)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A Go library that automatically generates bidirectional converter code between [Ent](https://entgo.io) (ORM) and [Protocol Buffers](https://protobuf.dev) types.
@@ -166,16 +166,23 @@ func main() {
 | Ent Type | Protobuf Type | Notes |
 |----------|--------------|-------|
 | `string` | `string` | Direct mapping |
-| `int` | `int32` / `int64` | Configurable |
+| `int` | `int64` | Fixed mapping |
+| `int8` / `int16` / `int32` | `int32` | Fixed mapping |
 | `int64` | `int64` | Direct mapping |
-| `uint` | `uint32` / `uint64` | Configurable |
+| `uint` / `uint8` / `uint16` / `uint32` | `uint32` | Fixed mapping |
 | `uint64` | `uint64` | Direct mapping |
 | `bool` | `bool` | Direct mapping |
+| `float32` | `float` | Direct mapping |
 | `float64` | `double` | Direct mapping |
 | `time.Time` | `int64` | Unix seconds |
 | `[]byte` | `bytes` | Direct mapping |
 | Enum | Enum | Automatic conversion |
 | Optional nillable scalar | proto3 `optional` scalar | Nil/presence is preserved |
+
+Custom `GoType` values that implement `driver.Valuer` / `sql.Scanner` /
+`encoding.BinaryMarshaler` (for example `sql.NullString` or `uuid.UUID`) are not
+translated by the converter; generation fails fast with an error rather than
+emitting code that does not compile.
 
 ## Generated Code Example
 
@@ -217,7 +224,7 @@ project/
 
 ## Requirements
 
-- Go 1.23 or later
+- Go 1.26 or later (generated code uses `new(expr)`, a Go 1.26 language feature)
 - Ent v0.14.0 or later
 - entproto (for proto generation)
 

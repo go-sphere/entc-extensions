@@ -1,28 +1,59 @@
 package entconv
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
 
-func TestPbEnumConstName(t *testing.T) {
-	cases := []struct {
-		msg, enum, value string
-		omit             bool
-		want             string
-	}{
-		{"Post", "Status", "PENDING", false, "Post_STATUS_PENDING"},
-		{"Post", "Status", "in_progress", false, "Post_STATUS_IN_PROGRESS"},
-		{"User", "OptionalLevel", "HIGH", false, "User_OPTIONAL_LEVEL_HIGH"},
-		{"User", "OptionalLevel", "high", true, "User_HIGH"},
+	"entgo.io/ent/entc"
+	"entgo.io/ent/entc/gen"
+	"entgo.io/ent/schema/field"
+	"github.com/go-sphere/entc-extensions/entproto"
+)
+
+// TestPbEnumValueConstName_ResolvesRealDescriptor proves the constant name is
+// read from the real protobuf enum descriptor rather than re-derived. For a
+// field named ip_v4 the enum type is IPV4 while its values are IP_V4_*, so the
+// actual protoc-gen-go constant is User_IP_V4_LOW, not User_IPV4_LOW.
+func TestPbEnumValueConstName_ResolvesRealDescriptor(t *testing.T) {
+	schema := filepath.Join(moduleRoot(t), "testdata", "fixtures", "enumschema")
+	g, err := entc.LoadGraph(schema, &gen.Config{IDType: &field.TypeInfo{Type: field.TypeInt64}})
+	if err != nil {
+		t.Fatalf("load graph: %v", err)
 	}
-	for _, c := range cases {
-		if got := pbEnumConstName(c.msg, c.enum, c.value, c.omit); got != c.want {
-			t.Errorf("pbEnumConstName(%q,%q,%q,%v) = %q, want %q", c.msg, c.enum, c.value, c.omit, got, c.want)
+	adapter, err := entproto.LoadAdapter(g)
+	if err != nil {
+		t.Fatalf("load adapter: %v", err)
+	}
+	fm, err := adapter.FieldMap("User")
+	if err != nil {
+		t.Fatalf("field map: %v", err)
+	}
+
+	var mapping *entproto.FieldMappingDescriptor
+	for _, m := range fm {
+		if m.IsEnumField {
+			mapping = m
+			break
 		}
 	}
-}
+	if mapping == nil {
+		t.Fatalf("no enum mapping found in %v", fm)
+	}
 
-func TestEnumAnnotationOmitPrefix(t *testing.T) {
-	// nil / missing annotation => false
-	if enumAnnotationOmitPrefix(nil) {
-		t.Fatal("nil field should not omit prefix")
+	cases := []struct {
+		value string
+		want  string
+	}{
+		{"low", "User_IP_V4_LOW"},
+		{"high", "User_IP_V4_HIGH"},
+	}
+	for _, c := range cases {
+		got, err := mapping.PbEnumValueConstName(c.value)
+		if err != nil {
+			t.Fatalf("PbEnumValueConstName(%q): %v", c.value, err)
+		}
+		if got != c.want {
+			t.Errorf("PbEnumValueConstName(%q) = %q, want %q", c.value, got, c.want)
+		}
 	}
 }

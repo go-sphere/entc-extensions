@@ -1,6 +1,7 @@
 package entproto
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -229,4 +230,52 @@ func findMessage(messages []*descriptorpb.DescriptorProto, name string) *descrip
 		}
 	}
 	return nil
+}
+
+// TestLinkDependencyError_MessageFieldReference covers a schema that references
+// a failed schema through a message-typed field (not an edge). The comment on
+// linkDependencyError promises this case; before the fix only edges were
+// checked, so the failure surfaced as an opaque descriptor-link error.
+func TestLinkDependencyError_MessageFieldReference(t *testing.T) {
+	b := &gen.Type{
+		Name:        "B",
+		ID:          &gen.Field{Name: "id", Type: &field.TypeInfo{Type: field.TypeInt64}},
+		Fields:      []*gen.Field{},
+		Edges:       []*gen.Edge{},
+		Annotations: map[string]any{MessageAnnotation: Message()},
+	}
+	a := &gen.Type{
+		Name: "A",
+		ID:   &gen.Field{Name: "id", Type: &field.TypeInfo{Type: field.TypeInt64}},
+		Fields: []*gen.Field{{
+			Name: "bref",
+			Type: &field.TypeInfo{Type: field.TypeInt},
+			Annotations: map[string]any{
+				FieldAnnotation: Field(3,
+					Type(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE),
+					TypeName("entpb.B"),
+				),
+			},
+		}},
+		Edges:       []*gen.Edge{},
+		Annotations: map[string]any{MessageAnnotation: Message()},
+	}
+	graph := &gen.Graph{Nodes: []*gen.Type{a, b}}
+	adapter := &Adapter{
+		graph:      graph,
+		nodeByName: map[string]*gen.Type{"A": a, "B": b},
+		errors:     map[string]error{"B": errors.New("unsupported field type")},
+	}
+
+	err := adapter.linkDependencyError()
+	if err == nil {
+		t.Fatal("expected DanglingReferenceError for message-field reference")
+	}
+	var dangling *DanglingReferenceError
+	if !errors.As(err, &dangling) {
+		t.Fatalf("expected *DanglingReferenceError, got %T (%v)", err, err)
+	}
+	if dangling.Schema != "A" || dangling.Field != "bref" || dangling.RefSchema != "B" {
+		t.Fatalf("dangling = %+v, want A.bref -> B", dangling)
+	}
 }
