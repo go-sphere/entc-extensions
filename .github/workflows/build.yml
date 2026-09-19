@@ -1,4 +1,4 @@
-name: Test
+name: CI
 
 permissions:
   contents: read
@@ -20,5 +20,12 @@ jobs:
           cache-dependency-path: "**/go.sum"
       - name: Install fixture tools
         run: make -C testdata init
+      # make test regenerates the testdata module (proto -> ent -> conv ->
+      # crud) and then verifies every module, so it must come before the
+      # dependency check: testdata/go.mod tracks the generated code.
       - name: Test
         run: make test
+      - name: Check dependencies
+        run: make tidy-check
+      - name: Build
+        run: make build

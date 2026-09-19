@@ -14,7 +14,7 @@ DIRECT_ORIGIN := GOPRIVATE=github.com/go-sphere/*
 
 .DEFAULT_GOAL := check
 
-.PHONY: deps-update tidy fmt test lint lint-all check verify regen update-golden
+.PHONY: deps-update tidy tidy-check fmt build test lint lint-all check verify regen update-golden
 .PHONY: tag tag-all tag-delete
 
 deps-update:
@@ -35,12 +35,31 @@ tidy:
 		( cd "$$dir" && GOWORK=off $(GO) mod tidy ); \
 	done
 
+# Non-mutating counterpart of tidy, for CI: fails if any module's go.mod/go.sum
+# is not what a consumer would resolve. testdata's go.mod tracks the code the
+# generators write there, so CI runs it after the regeneration step.
+tidy-check:
+	@set -eu; \
+	for dir in $(GO_MOD_DIRS); do \
+		echo "==> checking dependencies in $$dir"; \
+		( cd "$$dir" && GOWORK=off $(GO) mod tidy -diff ); \
+	done
+
 fmt:
 	@set -eu; \
 	for dir in $(GO_PACKAGE_DIRS); do \
 		echo "==> formatting $$dir"; \
 		( cd "$$dir" && $(GO) fmt ./... && \
 		  $(GOLANGCI_LINT) fmt --no-config --enable gofmt --enable goimports ); \
+	done
+
+# -o /dev/null: testdata holds main packages (the generators), and compiling
+# them must not drop binaries into the tree.
+build:
+	@set -eu; \
+	for dir in $(GO_PACKAGE_DIRS); do \
+		echo "==> building $$dir"; \
+		( cd "$$dir" && $(GO) build -o /dev/null ./... ); \
 	done
 
 test: regen verify
@@ -59,12 +78,7 @@ lint:
 # Backward-compatible alias.
 lint-all: lint
 
-check:
-	@set -eu; \
-	for dir in $(GO_MOD_DIRS); do \
-		echo "==> checking dependencies in $$dir"; \
-		( cd "$$dir" && GOWORK=off $(GO) mod tidy -diff ); \
-	done
+check: tidy-check
 	$(MAKE) lint
 	$(MAKE) test
 
