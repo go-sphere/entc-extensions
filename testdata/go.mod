@@ -12,7 +12,7 @@ require (
 	entgo.io/ent v0.14.6
 	github.com/go-sphere/entc-extensions/entconv v0.0.4
 	github.com/go-sphere/entc-extensions/entcrud v0.0.4
-	github.com/go-sphere/entc-extensions/entproto v0.0.4
+	github.com/go-sphere/entc-extensions/entproto v0.0.5
 	google.golang.org/protobuf v1.36.12
 )
 

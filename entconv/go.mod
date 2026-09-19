@@ -4,7 +4,7 @@ go 1.26.8
 
 require (
 	entgo.io/ent v0.14.6
-	github.com/go-sphere/entc-extensions/entproto v0.0.4
+	github.com/go-sphere/entc-extensions/entproto v0.0.5
 	github.com/jhump/protoreflect v1.18.1
 	golang.org/x/tools v0.50.0
 	google.golang.org/protobuf v1.36.12
