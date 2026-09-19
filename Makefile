@@ -8,6 +8,10 @@ VERIFY_DIRS := entproto entconv entcrud
 TAG_MODULES := entconv entcrud entproto
 DIRECT_DEPS_TEMPLATE := {{if and (not .Main) (not .Indirect) (not .Replace)}}{{.Path}}{{end}}
 
+# Resolve go-sphere modules straight from GitHub, bypassing the module proxy
+# and its cached "@latest", which lags behind freshly pushed tags.
+DIRECT_ORIGIN := GOPRIVATE=github.com/go-sphere/*
+
 .DEFAULT_GOAL := check
 
 .PHONY: deps-update tidy fmt test lint lint-all check verify regen update-golden
@@ -18,9 +22,10 @@ deps-update:
 	for dir in $(GO_MOD_DIRS); do \
 		echo "==> updating $$dir"; \
 		( cd "$$dir"; \
-		  deps="$$(GOWORK=off $(GO) list -m -f '$(DIRECT_DEPS_TEMPLATE)' all)"; \
-		  if [ -n "$$deps" ]; then GOWORK=off $(GO) get -u $$deps; fi; \
-		  GOWORK=off $(GO) mod tidy ); \
+		  GOWORK=off $(DIRECT_ORIGIN) $(GO) mod tidy; \
+		  deps="$$(GOWORK=off $(DIRECT_ORIGIN) $(GO) list -m -f '$(DIRECT_DEPS_TEMPLATE)' all)"; \
+		  if [ -n "$$deps" ]; then GOWORK=off $(DIRECT_ORIGIN) $(GO) get -u $$deps; fi; \
+		  GOWORK=off $(DIRECT_ORIGIN) $(GO) mod tidy ); \
 	done
 
 tidy:
