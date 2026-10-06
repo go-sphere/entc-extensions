@@ -1,3 +1,5 @@
+// Package generator renders entconv converter source from matched ent types
+// and protobuf messages.
 package generator
 
 import (

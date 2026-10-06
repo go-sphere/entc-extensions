@@ -1,3 +1,5 @@
+// Package pkgutil maps between Go module import paths and directories on disk
+// for entconv.
 package pkgutil
 
 import (

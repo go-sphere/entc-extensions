@@ -1,3 +1,5 @@
+// Package gofile assembles, formats, and writes the Go files emitted by
+// entcrud.
 package gofile
 
 import (

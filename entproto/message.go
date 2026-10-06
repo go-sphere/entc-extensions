@@ -8,12 +8,21 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 )
 
+// MessageAnnotation is the annotation name under which [Message] and [SkipGen]
+// are stored in ent schema annotations (gen.Type.Annotations).
 const MessageAnnotation = "ProtoMessage"
 
-// MessageOption configures the entproto.Message annotation
+// MessageOption configures the annotation returned by [Message].
 type MessageOption func(msg *message)
 
-// Message annotates an ent.Schema to specify that protobuf message generation is required for it.
+// Message annotates an ent schema so a protobuf message named after the schema
+// is generated for it. Return it from the schema's Annotations method. The
+// message is placed in proto package [DefaultProtoPackageName] ("entpb")
+// unless [PackageName] is given.
+//
+// Without [WithAutoFill], schemas lacking this annotation are not generated,
+// and every non-ID field and edge of an annotated schema needs a [Field] or
+// [Skip] annotation.
 func Message(opts ...MessageOption) schema.Annotation {
 	m := message{
 		Generate: true,
@@ -25,16 +34,20 @@ func Message(opts ...MessageOption) schema.Annotation {
 	return m
 }
 
-// SkipGen annotates an ent.Schema to specify that protobuf message generation is not required for it.
-// This is useful in cases where a schema ent.Mixin sets Generated to true and you want to specifically set it
-// to false for this schema.
+// SkipGen annotates an ent schema so no protobuf message is generated for it,
+// even with [WithAutoFill]. Use it to override a [Message] annotation inherited
+// from a mixin. Edges from generated schemas to a SkipGen schema must be
+// annotated with [Skip], otherwise generation fails.
 func SkipGen() schema.Annotation {
 	return message{
 		Generate: false,
 	}
 }
 
-// PackageName modifies the generated message's protobuf package name
+// PackageName sets the protobuf package of the message, for example
+// "acme.user.v1", which is written to acme/user/v1/v1.proto. An empty pkg
+// falls back to [DefaultProtoPackageName]. Messages that share a package share
+// one file; references across packages add the matching import.
 func PackageName(pkg string) MessageOption {
 	return func(msg *message) {
 		msg.Package = pkg

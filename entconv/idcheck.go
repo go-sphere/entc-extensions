@@ -15,7 +15,9 @@ import (
 
 // IDTypeMismatchError reports a divergence between the ID type assumed by
 // entconv (driven by the IDType option via the loaded ent graph) and the ID
-// type declared by the real generated ent struct on disk.
+// type declared by the real generated ent struct on disk. It is returned only
+// when the generated ent package is found; otherwise [Options.IDType] is
+// trusted. Fix it by setting IDType to the ID type used for ent generation.
 type IDTypeMismatchError struct {
 	Entity       string
 	ExpectedType string // ID type assumed by entconv (from the ent graph).

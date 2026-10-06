@@ -8,8 +8,19 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 )
 
-// FixGraph automatically adds entproto annotations to schemas that don't have them.
-// It adds Message annotation to schemas, Field annotation to fields and edges.
+// FixGraph adds missing entproto annotations to g in place; it is what
+// [WithAutoFill] runs before generation. For every schema without a [Message]
+// annotation it adds Message(). For every schema whose Message annotation has
+// Generate=true (that is, not [SkipGen]) it then numbers each member that has
+// neither a [Field] nor a [Skip] annotation: the ID gets [IDFieldNumber], and
+// other fields and edges get a number in the valid protobuf range derived from
+// a stable hash of the schema name, member kind, and member name, so numbers do
+// not change when members are added, removed, or reordered.
+//
+// FixGraph stops at the first schema it cannot fix and returns an error: an
+// [*InvalidAnnotationError] for an undecodable Field annotation, or an error
+// when a derived number (or 1 for the ID) is already in use. Schemas processed
+// before the failure stay modified.
 func FixGraph(g *gen.Graph) error {
 	for _, node := range g.Nodes {
 		if err := fixNode(node); err != nil {

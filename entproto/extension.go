@@ -15,10 +15,16 @@ import (
 	"go.uber.org/multierr"
 )
 
-// ExtensionOption is an option for the entproto extension.
+// ExtensionOption configures an [Extension] created by [NewExtension].
 type ExtensionOption func(*Extension)
 
-// NewExtension returns a new Extension configured by opts.
+// NewExtension returns an [Extension] configured by opts, applied in order;
+// when an option is repeated, the last one wins. With no options, .proto files
+// are written to <gen.Config.Target>/proto and only schemas annotated with
+// [Message] are generated.
+//
+// The returned error is currently always nil; callers should still check it.
+// Pass the extension to [entgo.io/ent/entc.Extensions].
 func NewExtension(opts ...ExtensionOption) (*Extension, error) {
 	e := &Extension{}
 	for _, opt := range opts {
@@ -27,8 +33,20 @@ func NewExtension(opts ...ExtensionOption) (*Extension, error) {
 	return e, nil
 }
 
-// Extension is an entc.Extension that generates .proto files from an ent schema.
-// To use within an entc.go file:
+// Extension is an [entgo.io/ent/entc.Extension] that generates .proto files
+// from an ent schema. Create it with [NewExtension]; the zero value behaves
+// like NewExtension() with no options.
+//
+// Its hook first runs the wrapped ent generator, so ent's own code is written
+// before any .proto file. It then, in order: applies [FixGraph] when
+// [WithAutoFill] is set, builds descriptors with [LoadAdapter], and writes one
+// .proto file per protobuf package, overwriting existing files. Schemas without
+// a [Message] annotation (or with [SkipGen]) are omitted and, unless AutoFill
+// is enabled, listed in a warning on standard error. Any schema that fails to
+// convert aborts generation with an error prefixed "entproto:"; files written
+// by ent itself are not rolled back.
+//
+// Use within an entc.go file:
 //
 //	func main() {
 //		ext, err := entproto.NewExtension()
@@ -48,23 +66,33 @@ type Extension struct {
 	autoFill bool
 }
 
-// WithProtoDir sets the directory where the generated .proto files will be written.
+// WithProtoDir sets the root directory for generated .proto files. A relative
+// dir is resolved against the process working directory. An empty dir keeps
+// the default, path.Join(gen.Config.Target, "proto"). Package a.b.c is written
+// to <dir>/a/b/c/c.proto.
 func WithProtoDir(dir string) ExtensionOption {
 	return func(e *Extension) {
 		e.protoDir = dir
 	}
 }
 
-// WithAutoFill enables automatic generation of entproto annotations.
-// When enabled, schemas without Message annotation will get one automatically,
-// and all fields/edges without Field annotation will be annotated with auto-generated field numbers.
+// WithAutoFill makes the extension call [FixGraph] before generating, so
+// schemas and members without entproto annotations are annotated
+// automatically: every schema without a [Message] annotation gets Message()
+// (proto package "entpb"), the ID gets field number 1, and each other field or
+// edge without [Field] or [Skip] gets a number derived from a stable hash of
+// its schema, kind, and name. Existing annotations are kept; schemas marked
+// with [SkipGen] are left untouched. A hash collision with an existing number
+// fails generation and must be resolved by annotating the colliding members
+// explicitly. AutoFill also suppresses the warning about unannotated schemas.
 func WithAutoFill() ExtensionOption {
 	return func(e *Extension) {
 		e.autoFill = true
 	}
 }
 
-// Hooks implements entc.Extension.
+// Hooks implements [entgo.io/ent/entc.Extension]. It returns a single hook
+// that performs the generation described on [Extension].
 func (e *Extension) Hooks() []gen.Hook {
 	return []gen.Hook{e.hook()}
 }
@@ -89,8 +117,8 @@ func (e *Extension) hook() gen.Hook {
 	}
 }
 
-// Hook returns a gen.Hook that invokes Generate.
-// To use it programatically:
+// Hook returns a [entgo.io/ent/entc/gen.Hook] equivalent to the hook of an
+// [Extension] created without options. To use it programmatically:
 //
 //	entc.Generate("./ent/schema", &gen.Config{
 //	  Hooks: []gen.Hook{
@@ -104,7 +132,10 @@ func Hook() gen.Hook {
 	return x.hook()
 }
 
-// Generate takes a *gen.Graph and creates .proto files.
+// Generate writes .proto files for g as an [Extension] without options would:
+// files go to path.Join(g.Target, "proto"), and only schemas annotated with
+// [Message] are generated. It does not run [FixGraph] and does not run ent's
+// own code generation. Errors are returned with an "entproto:" prefix.
 func Generate(g *gen.Graph) error {
 	x := &Extension{}
 	return x.generate(g)

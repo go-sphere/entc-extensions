@@ -6,21 +6,26 @@ import (
 )
 
 var (
-	// ErrInvalidAnnotation indicates an annotation cannot be decoded or validated.
+	// ErrInvalidAnnotation matches every [*InvalidAnnotationError] with
+	// errors.Is.
 	ErrInvalidAnnotation = errors.New("entproto: invalid annotation")
-	// ErrFieldNumberOverflow indicates a protobuf field number exceeded the supported range.
+	// ErrFieldNumberOverflow matches every [*FieldNumberOverflowError] with
+	// errors.Is.
 	ErrFieldNumberOverflow = errors.New("entproto: field number overflow")
-	// ErrDuplicateFieldNumber indicates a message has duplicate field numbers.
+	// ErrDuplicateFieldNumber matches every [*DuplicateFieldNumberError] with
+	// errors.Is.
 	ErrDuplicateFieldNumber = errors.New("entproto: duplicate field number")
 )
 
-// InvalidAnnotationError describes an invalid schema/field annotation.
+// InvalidAnnotationError reports an entproto annotation that cannot be
+// decoded, as returned by [FixGraph]. It matches [ErrInvalidAnnotation] with
+// errors.Is and unwraps to Cause.
 type InvalidAnnotationError struct {
-	Schema     string
-	Field      string
-	Edge       string
-	Annotation string
-	Cause      error
+	Schema     string // ent schema name
+	Field      string // field name; empty for schema-level or edge annotations
+	Edge       string // edge name; empty unless the annotation is on an edge
+	Annotation string // annotation name, such as [FieldAnnotation]
+	Cause      error  // underlying decode error
 }
 
 func (e *InvalidAnnotationError) Error() string {
@@ -45,7 +50,10 @@ func (*InvalidAnnotationError) Is(target error) bool {
 	return target == ErrInvalidAnnotation
 }
 
-// FieldNumberOverflowError describes a field number overflow.
+// FieldNumberOverflowError reports an edge whose [Field] number does not fit in
+// int32. It is the conversion error of the referencing schema (see
+// [Adapter.GetFileDescriptor]) and matches [ErrFieldNumberOverflow] with
+// errors.Is.
 type FieldNumberOverflowError struct {
 	Schema string
 	Field  string
@@ -63,7 +71,10 @@ func (*FieldNumberOverflowError) Is(target error) bool {
 	return target == ErrFieldNumberOverflow
 }
 
-// DuplicateFieldNumberError describes duplicate field numbers in a message.
+// DuplicateFieldNumberError reports two fields or edges of one message that use
+// the same protobuf field number. It is the conversion error of that schema
+// (see [Adapter.GetFileDescriptor]) and matches [ErrDuplicateFieldNumber] with
+// errors.Is.
 type DuplicateFieldNumberError struct {
 	Message string
 	Number  int32
@@ -77,8 +88,9 @@ func (*DuplicateFieldNumberError) Is(target error) bool {
 	return target == ErrDuplicateFieldNumber
 }
 
-// DanglingReferenceError describes a message that references another schema
-// (via an edge or message-typed field) whose proto descriptor failed to parse.
+// DanglingReferenceError reports a schema that references another schema (via
+// an edge or message-typed field) whose descriptor failed to build. It is
+// returned by [LoadAdapter] and unwraps to the referenced schema's error.
 type DanglingReferenceError struct {
 	Schema    string
 	Field     string

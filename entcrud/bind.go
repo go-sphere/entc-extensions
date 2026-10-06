@@ -12,7 +12,24 @@ import (
 	"github.com/go-sphere/entc-extensions/entcrud/internal/strcase"
 )
 
-// BindFiles generates Go files for binding entities.
+// BindFiles writes the bind helper package described by c into c.Dir,
+// creating the directory if needed. It first writes options.go, then one file
+// per entity with at least one action, named after the snake_case Source type
+// (user.go for ent.User; a repeated name gets a numeric suffix such as
+// user_1.go). Existing files with those names are overwritten; with
+// c.RemoveBeforeGenerate, previously generated files are deleted first.
+//
+// For each action type A on entity E, the generated function is named by
+// moving the E prefix of A to the end (UserCreate -> CreateUser) and has the
+// form
+//
+//	func CreateUser(source *ent.UserCreate, target *pb.User, options ...Option) *ent.UserCreate
+//
+// BindFiles fails if c.Dir is empty or a symlink, if an entity has a nil
+// Source or Target, or, with c.StrictTypeCheck, with a [*conf.TypeMismatchListError]
+// for the first action that has incompatible fields. It stops at the first
+// error; files written before it remain. c must not be nil and an empty
+// c.Package means "bind".
 func BindFiles(c *conf.FilesConf) error {
 	if err := gofile.CreateDir(c.Dir, c.RemoveBeforeGenerate); err != nil {
 		return err

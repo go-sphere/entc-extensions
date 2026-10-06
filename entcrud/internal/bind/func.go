@@ -1,3 +1,5 @@
+// Package bind renders the bind functions and the shared options file emitted
+// by entcrud.
 package bind
 
 import (

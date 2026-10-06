@@ -49,8 +49,14 @@ var (
 // entproto will emit the appropriate `import "shared/v1/user.proto";` in the
 // generated .proto file and reference the field as `shared.v1.User`.
 //
-// Re-registering the same type with a different file path panics; calling
-// RegisterCustomType again with identical arguments is a no-op.
+// The registry is process-wide and safe for concurrent use; registrations
+// persist for the life of the process and are shared by every [Extension].
+// Register types before running code generation, typically from the entc
+// program's main or an init function.
+//
+// RegisterCustomType panics if msg is nil or has no file descriptor, or if the
+// same type name is already registered with a different file or package;
+// calling it again with the same type is a no-op.
 func RegisterCustomType(msg proto.Message) {
 	if msg == nil {
 		panic("entproto: RegisterCustomType called with nil message")

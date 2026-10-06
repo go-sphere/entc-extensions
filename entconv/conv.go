@@ -25,28 +25,66 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
+// Options configures converter generation. Build it with [NewOptions] (or
+// [DefaultOptions]) so unset fields get the scaffold defaults; a zero Options
+// fails validation. Relative paths are resolved against the process working
+// directory. Options is read, not modified, by the Generate functions.
 type Options struct {
-	SchemaPath         string
-	EntPackagePath     string
-	IDType             string
-	ProtoFile          string
-	ConvPackage        string
-	ProtoPackagePath   string
-	ProtoAlias         string
-	OutDir             string
+	// SchemaPath is the ent schema directory passed to entc.LoadGraph.
+	// Required.
+	SchemaPath string
+	// EntPackagePath is the import path of the generated ent package, for
+	// example "example.com/app/ent". Required.
+	EntPackagePath string
+	// IDType is the Go type of ent ID fields: "int", "int64", "uint",
+	// "uint64", or "string"; empty means "int64". It must match the
+	// gen.Config.IDType used for ent code generation. When the generated ent
+	// package is found on disk, a mismatch fails with [*IDTypeMismatchError].
+	IDType string
+	// ProtoFile is the path of the .pb.go file that declares the protobuf
+	// message structs and enum constants. Required.
+	ProtoFile string
+	// ConvPackage is the package name of the generated converter code.
+	// Required.
+	ConvPackage string
+	// ProtoPackagePath is the import path of the package containing
+	// ProtoFile. Required.
+	ProtoPackagePath string
+	// ProtoAlias is the import name used for ProtoPackagePath in generated
+	// code. Empty means ConvPackage is used as the alias.
+	ProtoAlias string
+	// OutDir is the directory written by [GenerateConverterFile]. Required by
+	// validation even for [GenerateConverter], which does not use it.
+	OutDir string
+	// MissingProtoPolicy decides what happens when an ent schema has no
+	// message of the same name in ProtoFile. Empty means
+	// [MissingProtoPolicyStrict]; values are compared case-insensitively.
 	MissingProtoPolicy MissingProtoPolicy
-	WarningHandler     func(error)
+	// WarningHandler receives the [*MissingProtoMessagesError] under
+	// [MissingProtoPolicyWarn]. Nil means the warning is printed to standard
+	// error. It is called synchronously at most once per generation.
+	WarningHandler func(error)
 }
 
+// MissingProtoPolicy selects how generation treats ent schemas without a
+// matching protobuf message; see [Options.MissingProtoPolicy].
 type MissingProtoPolicy string
 
 const (
+	// MissingProtoPolicyStrict fails generation with a
+	// [*MissingProtoMessagesError]. It is the default.
 	MissingProtoPolicyStrict MissingProtoPolicy = "strict"
-	MissingProtoPolicyWarn   MissingProtoPolicy = "warn"
+	// MissingProtoPolicyWarn reports the [*MissingProtoMessagesError] through
+	// [Options.WarningHandler] and generates converters for the matched
+	// schemas only.
+	MissingProtoPolicyWarn MissingProtoPolicy = "warn"
 )
 
+// MissingProtoMessagesError lists ent schemas that have no protobuf message of
+// the same name in [Options.ProtoFile]. errors.Is reports true for any target
+// of this type, regardless of its contents.
 type MissingProtoMessagesError struct {
-	Missing []string
+	Missing []string // ent schema names, sorted
 }
 
 func (e *MissingProtoMessagesError) Error() string {
@@ -58,8 +96,25 @@ func (e *MissingProtoMessagesError) Is(target error) bool {
 	return errors.As(target, &t)
 }
 
+// Option modifies [Options]; see [NewOptions].
 type Option func(*Options)
 
+// DefaultOptions returns a new Options for the go-sphere scaffold layout,
+// relative to the working directory and the main module path M of the running
+// binary (empty when build information is unavailable):
+//
+//	SchemaPath:         "./internal/pkg/database/schema"
+//	EntPackagePath:     M + "/internal/pkg/database/ent"
+//	IDType:             "int64"
+//	ProtoFile:          "./api/entpb/entpb.pb.go"
+//	ConvPackage:        "entmap"
+//	ProtoPackagePath:   M + "/api/entpb"
+//	ProtoAlias:         "entpb"
+//	OutDir:             "./internal/pkg/render/entmap"
+//	MissingProtoPolicy: MissingProtoPolicyStrict
+//
+// The module-derived paths are correct when the generator is a main package of
+// the same module, run with go run from the module root.
 func DefaultOptions() *Options {
 	modulePath := currentModulePath()
 	return &Options{
@@ -75,6 +130,8 @@ func DefaultOptions() *Options {
 	}
 }
 
+// NewOptions returns [DefaultOptions] with opts applied in order; nil options
+// are ignored and later options override earlier ones.
 func NewOptions(opts ...Option) *Options {
 	o := DefaultOptions()
 	for _, opt := range opts {
@@ -85,70 +142,86 @@ func NewOptions(opts ...Option) *Options {
 	return o
 }
 
+// WithSchemaPath sets [Options.SchemaPath].
 func WithSchemaPath(v string) Option {
 	return func(o *Options) {
 		o.SchemaPath = v
 	}
 }
 
+// WithEntPackagePath sets [Options.EntPackagePath].
 func WithEntPackagePath(v string) Option {
 	return func(o *Options) {
 		o.EntPackagePath = v
 	}
 }
 
+// WithIDType sets [Options.IDType].
 func WithIDType(v string) Option {
 	return func(o *Options) {
 		o.IDType = v
 	}
 }
 
+// WithProtoFile sets [Options.ProtoFile].
 func WithProtoFile(v string) Option {
 	return func(o *Options) {
 		o.ProtoFile = v
 	}
 }
 
+// WithConvPackage sets [Options.ConvPackage].
 func WithConvPackage(v string) Option {
 	return func(o *Options) {
 		o.ConvPackage = v
 	}
 }
 
+// WithProtoPackagePath sets [Options.ProtoPackagePath].
 func WithProtoPackagePath(v string) Option {
 	return func(o *Options) {
 		o.ProtoPackagePath = v
 	}
 }
 
+// WithProtoAlias sets [Options.ProtoAlias].
 func WithProtoAlias(v string) Option {
 	return func(o *Options) {
 		o.ProtoAlias = v
 	}
 }
 
+// WithOutDir sets [Options.OutDir].
 func WithOutDir(v string) Option {
 	return func(o *Options) {
 		o.OutDir = v
 	}
 }
 
+// WithMissingProtoPolicy sets [Options.MissingProtoPolicy].
 func WithMissingProtoPolicy(v MissingProtoPolicy) Option {
 	return func(o *Options) {
 		o.MissingProtoPolicy = v
 	}
 }
 
+// WithWarningHandler sets [Options.WarningHandler].
 func WithWarningHandler(h func(error)) Option {
 	return func(o *Options) {
 		o.WarningHandler = h
 	}
 }
 
+// RequiredOptionError reports a required [Options] field that is empty. Field
+// names the option: "ProtoFile", "SchemaPath", "EntPackage" (for
+// EntPackagePath), "ProtoPackage" (for ConvPackage), "ProtoPackagePath", or
+// "OutDir".
 type RequiredOptionError struct {
 	Field string
 }
 
+// InvalidIDTypeError reports an [Options.IDType] value that is not one of
+// "int", "int64", "uint", "uint64", "string", or empty.
 type InvalidIDTypeError struct {
 	Value string
 }
@@ -157,6 +230,11 @@ func (e *InvalidIDTypeError) Error() string {
 	return fmt.Sprintf("unsupported IDType %q; valid values are int, int64, uint, uint64, and string", e.Value)
 }
 
+// ProtoFieldContractError reports that a message struct in [Options.ProtoFile]
+// does not match what the ent schema and its entproto annotations imply:
+// Field is missing (Actual is empty) or has Go type Actual instead of Expected.
+// It usually means the .pb.go file is stale; regenerate it from the current
+// .proto files.
 type ProtoFieldContractError struct {
 	Message  string
 	Field    string
@@ -175,6 +253,17 @@ func (e *RequiredOptionError) Error() string {
 	return fmt.Sprintf("required option %q is empty", e.Field)
 }
 
+// GenerateConverter returns the converter source for all matched schemas as a
+// single gofmt-formatted file in package opts.ConvPackage. It writes no files;
+// opts.OutDir must still be non-empty.
+//
+// GenerateConverter loads the ent schema (compiling it with go/packages), parses
+// opts.ProtoFile, and validates both before generating. Errors include
+// [*RequiredOptionError] and [*InvalidIDTypeError] for invalid options,
+// [*IDTypeMismatchError], [*MissingProtoMessagesError] under
+// [MissingProtoPolicyStrict], and, wrapped, [*ProtoFieldContractError] and
+// [*EnumConstMissingError]; use errors.As to inspect them. It also fails when no
+// schema matches a message. opts must not be nil.
 func GenerateConverter(opts *Options) ([]byte, error) {
 	cg, err := prepareGenerator(opts)
 	if err != nil {
@@ -199,10 +288,19 @@ func GenerateConverter(opts *Options) ([]byte, error) {
 	return imported, nil
 }
 
+// GenerateConverterWithOptions is [GenerateConverter] with [NewOptions](opts...).
 func GenerateConverterWithOptions(opts ...Option) ([]byte, error) {
 	return GenerateConverter(NewOptions(opts...))
 }
 
+// GenerateConverterFile validates like [GenerateConverter] and returns the
+// same errors, then writes one file per matched schema, named after the
+// lower-cased schema (user.go for User), into opts.OutDir, creating it if
+// needed. Before writing, it deletes every .go file directly in OutDir whose
+// content starts with "// Code generated by protoc-gen-entconv. DO NOT EDIT.",
+// so converters for removed schemas disappear; other files are left alone.
+// Writes are not atomic: an error after validation can leave OutDir partially
+// updated. opts must not be nil.
 func GenerateConverterFile(opts *Options) error {
 	cg, err := prepareGenerator(opts)
 	if err != nil {
@@ -211,6 +309,8 @@ func GenerateConverterFile(opts *Options) error {
 	return cg.GenerateAll(opts.OutDir)
 }
 
+// GenerateConverterFileWithOptions is [GenerateConverterFile] with
+// [NewOptions](opts...). With no options it uses [DefaultOptions].
 func GenerateConverterFileWithOptions(opts ...Option) error {
 	return GenerateConverterFile(NewOptions(opts...))
 }
@@ -343,7 +443,8 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) ([]
 // ProtoFileInfo holds the parsed contents of a generated .pb.go file: the
 // message structs (used for field-contract validation) and the set of declared
 // top-level constants (used to validate generated enum references before the
-// converter code is written).
+// converter code is written). It is used internally; no exported function
+// returns it, and its Messages values have an internal type.
 type ProtoFileInfo struct {
 	Messages map[string]*generator.ProtoMessage
 	Consts   map[string]struct{}
@@ -615,7 +716,9 @@ func validateMessageFieldEntShape(typeInfo generator.TypeInfo, mapping *entproto
 }
 
 // EnumConstMissingError reports that the generated converter would reference a
-// protobuf enum constant that does not exist in the supplied .pb.go file.
+// protobuf enum constant that does not exist in the supplied .pb.go file. When
+// the constant name itself cannot be resolved, Const holds that error's text
+// instead of a name.
 type EnumConstMissingError struct {
 	Message string
 	Field   string

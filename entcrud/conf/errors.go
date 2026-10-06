@@ -5,13 +5,15 @@ import (
 	"strings"
 )
 
-// TypeMismatchError describes a non-convertible source/target field pair.
+// TypeMismatchError describes one protobuf field that cannot be bound to its
+// ent setter, either because the types are neither assignable nor convertible
+// or because the registered custom converter does not fit.
 type TypeMismatchError struct {
-	Entity     string
-	Field      string
-	SourceType string
-	TargetType string
-	Suggestion string
+	Entity     string // ent entity type name, such as "User"
+	Field      string // ent struct field name, such as "Birthday"
+	SourceType string // Go type of the ent setter argument
+	TargetType string // Go type of the protobuf struct field
+	Suggestion string // how to fix it; may be empty
 }
 
 func (e TypeMismatchError) Error() string {
@@ -27,7 +29,11 @@ func (e TypeMismatchError) Error() string {
 	)
 }
 
-// TypeMismatchListError aggregates multiple type mismatches in one generation run.
+// TypeMismatchListError is returned by
+// [github.com/go-sphere/entc-extensions/entcrud.BindFiles] under
+// [FilesConf.StrictTypeCheck]. Items lists every mismatched field of the first
+// action that had any; fix them and rerun to see later ones. Use errors.As to
+// obtain it.
 type TypeMismatchListError struct {
 	Items []TypeMismatchError
 }

@@ -17,16 +17,31 @@ import (
 )
 
 const (
+	// DefaultProtoPackageName is the protobuf package used when a [Message]
+	// annotation sets no [PackageName].
 	DefaultProtoPackageName = "entpb"
-	IDFieldNumber           = 1
+	// IDFieldNumber is the protobuf field number reserved for the ID field.
+	IDFieldNumber = 1
 )
 
 var (
+	// ErrSchemaSkipped is returned by [Adapter.GetFileDescriptor] and
+	// [Adapter.GetMessageDescriptor] for a schema that has no [Message]
+	// annotation or is annotated with [SkipGen].
 	ErrSchemaSkipped   = errors.New("entproto: schema not annotated with Generate=true")
 	repeatedFieldLabel = descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 )
 
-// LoadAdapter takes a *gen.Graph and parses it into protobuf file descriptors
+// LoadAdapter converts every schema in graph into protobuf descriptors without
+// writing files. It reads annotations as they are; call [FixGraph] first to get
+// [WithAutoFill] behavior. Neither the graph nor its annotations are modified,
+// but [MessageField] annotations register their types in the process-wide
+// [RegisterCustomType] registry.
+//
+// Per-schema conversion failures do not fail LoadAdapter; they are reported
+// later by [Adapter.GetFileDescriptor] for that schema. LoadAdapter returns an
+// error when descriptors cannot be linked, including a [*DanglingReferenceError]
+// when a converted schema references one that failed.
 func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 	a := &Adapter{
 		graph:            graph,
@@ -46,7 +61,10 @@ func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 	return a, nil
 }
 
-// Adapter facilitates the transformation of ent gen.Type to desc.FileDescriptors
+// Adapter holds the protobuf descriptors built from an ent graph by
+// [LoadAdapter]. It is not modified after LoadAdapter returns. Maps and
+// descriptors returned by its methods are shared with the Adapter and must not
+// be modified by callers.
 type Adapter struct {
 	graph            *gen.Graph
 	nodeByName       map[string]*gen.Type
@@ -60,16 +78,18 @@ type Adapter struct {
 	errors        map[string]error
 }
 
-// AllFileDescriptors returns a file descriptor per proto package for each package that contains
-// a successfully parsed ent.Schema. The map also includes stub descriptors for externally registered
-// custom types; use GeneratedFileDescriptors to filter those out.
+// AllFileDescriptors returns the file descriptors keyed by .proto file name
+// (for example "entpb/entpb.proto"): one per protobuf package that contains a
+// successfully converted schema, plus stub descriptors for externally
+// registered custom types. Use [Adapter.GeneratedFileDescriptors] to exclude
+// the stubs.
 func (a *Adapter) AllFileDescriptors() map[string]*desc.FileDescriptor {
 	return a.descriptors
 }
 
 // GeneratedFileDescriptors returns the file descriptors that entproto owns and
-// should write to disk, excluding stubs synthesised for RegisterCustomType
-// dependencies.
+// writes to disk, keyed by .proto file name, excluding stubs synthesised for
+// [RegisterCustomType] dependencies.
 func (a *Adapter) GeneratedFileDescriptors() map[string]*desc.FileDescriptor {
 	if len(a.externalFiles) == 0 {
 		return a.descriptors
@@ -84,8 +104,10 @@ func (a *Adapter) GeneratedFileDescriptors() map[string]*desc.FileDescriptor {
 	return out
 }
 
-// GetMessageDescriptor retrieves the protobuf message descriptor for `schemaName`, if an error was returned
-// while trying to parse that error they are returned
+// GetMessageDescriptor returns the protobuf message descriptor for the schema
+// named schemaName (the ent type name, for example "User"). It returns the
+// schema's conversion error if it failed, [ErrSchemaSkipped] if it is not
+// generated, or an error if the schema is unknown.
 func (a *Adapter) GetMessageDescriptor(schemaName string) (*desc.MessageDescriptor, error) {
 	fd, err := a.GetFileDescriptor(schemaName)
 	if err != nil {
@@ -290,8 +312,11 @@ func (a *Adapter) fieldReferencedSchema(f *gen.Field) string {
 	return ""
 }
 
-// GetFileDescriptor returns the proto file descriptor containing the transformed proto message descriptor for
-// `schemaName` along with any other messages in the same protobuf package.
+// GetFileDescriptor returns the file descriptor that contains the message for
+// the schema named schemaName, along with every other message in the same
+// protobuf package. If the schema could not be converted, it returns that
+// conversion error unchanged (for example a [*DuplicateFieldNumberError] or
+// [ErrSchemaSkipped]); an unknown schema name yields a plain error.
 func (a *Adapter) GetFileDescriptor(schemaName string) (*desc.FileDescriptor, error) {
 	if err, ok := a.errors[schemaName]; ok {
 		return nil, err

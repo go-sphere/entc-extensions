@@ -1,3 +1,5 @@
+// Package inspect extracts type names, import paths, fields, and methods from
+// Go values by reflection for entcrud.
 package inspect
 
 import (

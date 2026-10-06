@@ -1,3 +1,4 @@
+// Package strcase converts Go identifiers to snake_case for entcrud.
 package strcase
 
 import (

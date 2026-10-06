@@ -4,11 +4,15 @@ import (
 	"entgo.io/ent/schema"
 )
 
+// SkipAnnotation is the annotation name under which [Skip] is stored in ent
+// field and edge annotations.
 const SkipAnnotation = "ProtoSkip"
 
 type skipped struct{}
 
-// Skip annotates an ent.Schema to specify that this field will be skipped during .proto generation.
+// Skip annotates an ent field or edge so it is left out of the generated
+// protobuf message. [WithAutoFill] does not number skipped members. To omit a
+// whole schema, use [SkipGen] instead.
 func Skip() schema.Annotation {
 	return skipped{}
 }

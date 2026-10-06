@@ -11,10 +11,28 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
+// FieldAnnotation is the annotation name under which [Field] and
+// [MessageField] are stored in ent field and edge annotations.
 const FieldAnnotation = "ProtoField"
 
+// FieldOption configures the annotation returned by [Field].
 type FieldOption func(*pbfield)
 
+// Field annotates an ent field or edge with its protobuf field number num.
+// Numbers must be unique within the message and must fit in int32; number 1 is
+// reserved for the ID field and is rejected on other fields and edges. The
+// default ent ID gets number 1 implicitly; an id field declared in the schema's
+// Fields needs Field(1) (or [WithAutoFill]).
+//
+// Without options, the protobuf type follows the ent type: bool, string, and
+// numeric types map to the matching scalar (int, int64 -> int64; int8-int32 ->
+// int32; uint, uint8-uint32 -> uint32; uint64 -> uint64; float32 -> float;
+// float64 -> double), time.Time -> int64, UUID and bytes -> bytes, enum -> a
+// nested enum configured by [Enum], and JSON []string, []int32, []int64,
+// []uint32, or []uint64 -> the matching repeated scalar. Other JSON and Other
+// fields fail unless [Type] or [MessageField] supplies the type. Nillable
+// fields that are neither repeated nor messages become proto3 optional fields. An edge becomes a
+// message reference to the target schema, repeated unless the edge is unique.
 func Field(num int, options ...FieldOption) schema.Annotation {
 	f := pbfield{Number: num}
 	for _, apply := range options {
@@ -41,8 +59,10 @@ func (f pbfield) Name() string {
 	return FieldAnnotation
 }
 
-// Type overrides the default mapping between ent types and protobuf types.
-// Example:
+// Type overrides the protobuf type that [Field] would derive from the ent type.
+// TYPE_ENUM and TYPE_MESSAGE also require [TypeName]. The override only
+// affects the .proto output; the ent field's Go type must still be compatible
+// with the Go type protoc-gen-go generates. Example:
 //
 //	field.Uint8("custom_pb").
 //		Annotations(
@@ -56,7 +76,11 @@ func Type(typ descriptorpb.FieldDescriptorProto_Type) FieldOption {
 	}
 }
 
-// TypeName sets the pb descriptors type name, needed if the Type attribute is TYPE_ENUM or TYPE_MESSAGE.
+// TypeName sets the fully-qualified protobuf type name (for example
+// "google.protobuf.Timestamp"; a leading dot is optional) used with [Type]
+// TYPE_ENUM or TYPE_MESSAGE. TypeName has no effect without [Type]. A message
+// defined outside the generated files must also be registered with
+// [RegisterCustomType]; [MessageField] does both in one step.
 func TypeName(n string) FieldOption {
 	return func(p *pbfield) {
 		p.TypeName = n
@@ -68,7 +92,7 @@ func TypeName(n string) FieldOption {
 // type name and proto file path straight off the supplied generated Go message
 // (no manual strings, no descriptorpb import needed); both are embedded in the
 // annotation so the generator can wire up the import without a separate
-// RegisterCustomType call.
+// RegisterCustomType call. It panics if msg is nil or has no file descriptor.
 //
 // Typical usage on a JSON-backed column:
 //

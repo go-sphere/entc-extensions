@@ -9,8 +9,10 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-// FieldMap returns a FieldMap containing descriptors of all of the mappings between the ent schema field
-// and the protobuf message's field descriptors.
+// FieldMap returns the mapping between the protobuf fields of the message for
+// schemaName and the ent fields and edges they came from. It returns the same
+// errors as [Adapter.GetMessageDescriptor], or an error if schemaName is not in
+// the graph.
 func (a *Adapter) FieldMap(schemaName string) (FieldMap, error) {
 	bt, err := extractGenTypeByName(a.graph, schemaName)
 	if err != nil {
@@ -23,11 +25,12 @@ func (a *Adapter) FieldMap(schemaName string) (FieldMap, error) {
 	return a.mapFields(bt, md)
 }
 
-// FieldMap contains a mapping between the field's name in the ent schema and a FieldMappingDescriptor.
+// FieldMap maps protobuf field names (equal to the ent field or edge names) to
+// their [FieldMappingDescriptor]. Use its methods for sorted, filtered views.
 type FieldMap map[string]*FieldMappingDescriptor
 
-// Fields returns the FieldMappingDescriptor for all of the fields of the schema. Items are sorted alphabetically
-// on pb field name.
+// Fields returns the descriptors of all non-edge fields, including the ID,
+// sorted by [FieldMappingDescriptor.PbStructField].
 func (m FieldMap) Fields() []*FieldMappingDescriptor {
 	var out []*FieldMappingDescriptor
 	for _, f := range m {
@@ -41,7 +44,8 @@ func (m FieldMap) Fields() []*FieldMappingDescriptor {
 	return out
 }
 
-// ID returns the FieldMappingDescriptor for the ID field of the schema.
+// ID returns the descriptor of the ID field, or nil if the message has none
+// (for example when the ID is annotated with [Skip]).
 func (m FieldMap) ID() *FieldMappingDescriptor {
 	for _, f := range m {
 		if f.IsIDField {
@@ -51,8 +55,8 @@ func (m FieldMap) ID() *FieldMappingDescriptor {
 	return nil
 }
 
-// Edges returns the FieldMappingDescriptor for all of the edge fields of the schema. Items are sorted alphabetically
-// on pb field name.
+// Edges returns the descriptors of all edge fields, sorted by
+// [FieldMappingDescriptor.PbStructField].
 func (m FieldMap) Edges() []*FieldMappingDescriptor {
 	var out []*FieldMappingDescriptor
 	for _, f := range m {
@@ -67,6 +71,8 @@ func (m FieldMap) Edges() []*FieldMappingDescriptor {
 	return out
 }
 
+// Enums returns the descriptors of all enum-typed fields, sorted by
+// [FieldMappingDescriptor.PbStructField].
 func (m FieldMap) Enums() []*FieldMappingDescriptor {
 	var out []*FieldMappingDescriptor
 	for _, f := range m {
@@ -80,7 +86,10 @@ func (m FieldMap) Enums() []*FieldMappingDescriptor {
 	return out
 }
 
-// FieldMappingDescriptor describes the mapping from a protobuf field descriptor to an ent Schema field
+// FieldMappingDescriptor describes how one protobuf field maps to an ent field
+// or edge. Exactly one of EntField and EntEdge is set, as indicated by
+// IsEdgeField; ReferencedPbType is the target message for edges and nil
+// otherwise.
 type FieldMappingDescriptor struct {
 	EntField          *gen.Field
 	EntEdge           *gen.Edge
@@ -91,16 +100,20 @@ type FieldMappingDescriptor struct {
 	ReferencedPbType  *desc.MessageDescriptor
 }
 
-// PbStructField returns the camelCase name of the protobuf field.
+// PbStructField returns the Go struct field name protoc-gen-go generates for
+// the protobuf field, for example "created_at" -> "CreatedAt".
 func (d *FieldMappingDescriptor) PbStructField() string {
 	return camelCase(d.PbFieldDescriptor.GetName())
 }
 
-// PbFieldName returns the PascalCase name of the protobuf field (for Go field access).
+// PbFieldName returns the same Go struct field name as
+// [FieldMappingDescriptor.PbStructField].
 func (d *FieldMappingDescriptor) PbFieldName() string {
 	return camelCase(d.PbFieldDescriptor.GetName())
 }
 
+// IsProto3Optional reports whether the protobuf field is a proto3 optional
+// field, which entproto emits for nillable ent fields.
 func (d *FieldMappingDescriptor) IsProto3Optional() bool {
 	return d.PbFieldDescriptor.AsFieldDescriptorProto().GetProto3Optional()
 }
@@ -142,14 +155,15 @@ func (d *FieldMappingDescriptor) IsProto3OptionalPointer() bool {
 	return d.IsProto3Optional() && d.PbFieldDescriptor.GetType() != descriptorpb.FieldDescriptorProto_TYPE_BYTES
 }
 
-// EdgeIDPbStructField returns the name for the id field  of the
-// entity this edge refers to.
+// EdgeIDPbStructField returns the Go struct field name of the ID field of the
+// entity this edge refers to. It panics if the descriptor is not an edge.
 func (d *FieldMappingDescriptor) EdgeIDPbStructField() string {
 	return camelCase(d.EntEdge.Type.ID.Name)
 }
 
-// EdgeIDPbStructFieldDesc returns the protobuf field descriptor for the id field
-// of the entity this edge refers to.
+// EdgeIDPbStructFieldDesc returns the protobuf field descriptor for the ID
+// field of the message this edge refers to, or nil if that message has no
+// such field. It panics if the descriptor is not an edge.
 func (d *FieldMappingDescriptor) EdgeIDPbStructFieldDesc() *desc.FieldDescriptor {
 	field := camelCase(d.EntEdge.Type.ID.Name)
 	return d.ReferencedPbType.FindFieldByName(snake(field))

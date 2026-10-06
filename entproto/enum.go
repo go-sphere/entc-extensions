@@ -11,18 +11,34 @@ import (
 	"entgo.io/ent/entc/gen"
 )
 
+// EnumAnnotation is the annotation name under which [Enum] is stored in ent
+// field annotations.
 const (
 	EnumAnnotation = "ProtoEnum"
 )
 
 var (
+	// ErrEnumFieldsNotAnnotated is returned when an [Enum] annotation does not
+	// list exactly as many values as the ent enum field defines.
 	ErrEnumFieldsNotAnnotated = errors.New("entproto: all Enum options must be covered with an entproto.Enum annotation")
 	normalizeEnumIdent        = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
 )
 
+// EnumOption configures the annotation returned by [Enum].
 type EnumOption func(*enum)
 
-// Enum configures the mapping between the ent Enum field and a protobuf Enum.
+// Enum maps each value of an ent enum field to a protobuf enum number. Use it
+// together with [Field] on the same field. vals must contain every ent enum
+// value and nothing else, and protobuf identifiers derived from the values must
+// not collide after [NormalizeEnumIdentifier].
+//
+// Number 0 is special: if the ent field has a default, the default value must
+// map to 0; otherwise no value may use 0, and entproto emits
+// <FIELD>_UNSPECIFIED = 0 itself. The generated enum is nested in the message
+// and named after the field in PascalCase; value names are
+// <FIELD>_<VALUE> in upper snake case unless [OmitFieldPrefix] is set.
+// Violations are reported when the schema is converted, not when Enum is
+// called.
 func Enum(vals map[string]int32, opts ...EnumOption) *enum {
 	// apply options
 	e := &enum{Options: vals}
@@ -107,10 +123,11 @@ func (e *enum) Verify(fld *gen.Field) error {
 	return nil
 }
 
-// EnumValueNumber returns the protobuf number configured for the ent enum value
-// `value` on fld via the entproto.Enum annotation. It lets consumers resolve the
-// real protobuf value descriptor (and therefore its generated Go constant name)
-// instead of re-deriving it from naming conventions.
+// EnumValueNumber returns the protobuf number that the [Enum] annotation on fld
+// assigns to the ent enum value. ok is false when fld has no decodable Enum
+// annotation or the annotation does not list value. It lets consumers resolve
+// the real protobuf value descriptor (and therefore its generated Go constant
+// name) instead of re-deriving it from naming conventions.
 func EnumValueNumber(fld *gen.Field, value string) (int32, bool) {
 	ann, err := extractEnumAnnotation(fld)
 	if err != nil {
@@ -136,8 +153,10 @@ func extractEnumAnnotation(fld *gen.Field) (*enum, error) {
 	return &out, nil
 }
 
-// NormalizeEnumIdentifier normalizes the identifier of an enum pbfield
-// to match the Proto Style Guide.
+// NormalizeEnumIdentifier upper-cases s and replaces every run of characters
+// other than ASCII letters, digits, and underscore with a single underscore,
+// for example "in-progress" -> "IN_PROGRESS". entproto applies it to ent enum
+// values before building protobuf enum value names.
 func NormalizeEnumIdentifier(s string) string {
 	return strings.ToUpper(normalizeEnumIdent.ReplaceAllString(s, "_"))
 }
