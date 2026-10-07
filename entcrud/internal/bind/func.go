@@ -218,7 +218,11 @@ func buildFieldContext(
 	if targetFieldIsPtr {
 		targetValueType = targetValueType.Elem()
 	}
-	if !targetValueType.AssignableTo(setterArgType) && !targetValueType.ConvertibleTo(setterArgType) {
+	// Go allows int → string conversions, but they yield the rune for that code
+	// point ("\x01"), never the intended value. This is the common mismatch of a
+	// proto enum (int32) against an ent enum (string), so treat it as one.
+	intToString := isIntegerKind(targetValueType.Kind()) && setterArgType.Kind() == reflect.String
+	if intToString || (!targetValueType.AssignableTo(setterArgType) && !targetValueType.ConvertibleTo(setterArgType)) {
 		return field, true, &conf.TypeMismatchError{
 			Entity:     entityName,
 			Field:      sourceField.Name,
@@ -229,6 +233,10 @@ func buildFieldContext(
 	}
 
 	return field, true, nil
+}
+
+func isIntegerKind(k reflect.Kind) bool {
+	return reflect.Int <= k && k <= reflect.Uintptr
 }
 
 func setterArgumentType(method reflect.Method) (reflect.Type, bool) {

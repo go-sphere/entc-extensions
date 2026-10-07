@@ -212,3 +212,34 @@ func TestGenBindFunc_NoBindableFieldsOmitsUnusedOption(t *testing.T) {
 		t.Fatalf("generated code should still return source:\n%s", code)
 	}
 }
+
+type entStatus string
+
+type pbStatus int32
+
+type enumSourceEntity struct {
+	Status entStatus
+}
+
+type enumTargetMessage struct {
+	Status pbStatus
+}
+
+type enumCreateAction struct{}
+
+func (enumCreateAction) SetStatus(entStatus) {}
+
+// Go accepts the int → string conversion, but it yields the code point's rune
+// ("\x01"), so a proto enum bound to an ent string enum must be a mismatch.
+func TestGenBindFunc_StrictTypeCheckRejectsIntegerToString(t *testing.T) {
+	entity := conf.NewEntity(enumSourceEntity{}, enumTargetMessage{}, []any{enumCreateAction{}})
+
+	_, err := GenBindFunc(enumCreateAction{}, entity, nil, true)
+	var mismatch *conf.TypeMismatchListError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected TypeMismatchListError, got %T (%v)", err, err)
+	}
+	if got := mismatch.Items[0].Field; got != "Status" {
+		t.Fatalf("field = %q, want Status", got)
+	}
+}
