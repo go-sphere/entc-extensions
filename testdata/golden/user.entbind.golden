@@ -6,6 +6,7 @@ import (
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/conv"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/user"
+	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/model"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/render/entmap"
 )
 
@@ -106,6 +107,11 @@ func CreateUser(source *ent.UserCreate, target *entpb.User, options ...Option) *
 			source.SetOptionalLevel(entmap.ToEntUser_OptionalLevel(*target.OptionalLevel))
 		} else {
 			source.SetNillableOptionalLevel(nil)
+		}
+	}
+	if option.CanSetField(user.FieldNickname) {
+		if option.CanSetZero(user.FieldNickname) || target.Nickname != "" {
+			source.SetNickname(model.Nickname(target.Nickname))
 		}
 	}
 	return source
@@ -218,6 +224,11 @@ func UpdateOneUser(source *ent.UserUpdateOne, target *entpb.User, options ...Opt
 			source.SetOptionalLevel(entmap.ToEntUser_OptionalLevel(*target.OptionalLevel))
 		} else {
 			source.SetNillableOptionalLevel(nil)
+		}
+	}
+	if option.CanSetField(user.FieldNickname) {
+		if option.CanSetZero(user.FieldNickname) || target.Nickname != "" {
+			source.SetNickname(model.Nickname(target.Nickname))
 		}
 	}
 	return source

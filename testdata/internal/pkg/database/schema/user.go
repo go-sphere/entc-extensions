@@ -6,6 +6,7 @@ import (
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"github.com/go-sphere/entc-extensions/entproto"
+	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/model"
 )
 
 type User struct {
@@ -75,6 +76,9 @@ func (User) Fields() []ent.Field {
 					"high": 2,
 				}),
 			),
+		field.String("nickname").
+			GoType(model.Nickname("")).
+			Annotations(entproto.Field(23)),
 	}
 }
 

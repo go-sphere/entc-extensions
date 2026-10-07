@@ -21,7 +21,7 @@ var typeMap = map[field.Type]typeConfig{
 	field.TypeInt16:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_INT32},
 	field.TypeInt32:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_INT32},
 	field.TypeInt64:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_INT64},
-	field.TypeUint:    {pbType: descriptorpb.FieldDescriptorProto_TYPE_UINT32},
+	field.TypeUint:    {pbType: descriptorpb.FieldDescriptorProto_TYPE_UINT64},
 	field.TypeUint8:   {pbType: descriptorpb.FieldDescriptorProto_TYPE_UINT32},
 	field.TypeUint16:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_UINT32},
 	field.TypeUint32:  {pbType: descriptorpb.FieldDescriptorProto_TYPE_UINT32},

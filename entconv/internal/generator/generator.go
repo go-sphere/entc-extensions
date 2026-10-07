@@ -276,6 +276,19 @@ func (g *Generator) Imports() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("resolving field map for %s while collecting imports: %w", t.Type.Name, err)
 		}
+		// Named basic Go types (type Role string) are converted by name, so
+		// their package must be imported; goimports drops it when unused.
+		for _, f := range fieldMap.Fields() {
+			ti := f.EntField.Type
+			if !f.EntField.HasGoType() || ti.PkgPath == "" || ti.PkgName == "" {
+				continue
+			}
+			if _, ok := seen[ti.PkgPath]; ok {
+				continue
+			}
+			seen[ti.PkgPath] = struct{}{}
+			imp = append(imp, fmt.Sprintf(`%s "%s"`, ti.PkgName, ti.PkgPath))
+		}
 		for range fieldMap.Enums() {
 			enumPkg, err := g.entEnumPkg(t.Type.Name)
 			if err != nil {

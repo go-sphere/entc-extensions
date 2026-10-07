@@ -110,6 +110,15 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 			out.ToEntScannerConversion = "string"
 		}
 	case efld.IsBool(), efld.IsBytes(), efld.IsString():
+		if efld.HasGoType() {
+			// A named basic type (type Role string) needs an explicit
+			// conversion in both directions; the identity assignment the
+			// template emits otherwise does not compile.
+			out.ToEntConversion = efld.Type.Ident
+			if out.ToProtoConversion == "" {
+				out.ToProtoConversion = efld.Type.Type.String()
+			}
+		}
 	case efld.Type.Numeric():
 		out.ToEntConversion = efld.Type.String()
 	case efld.IsTime():

@@ -3,6 +3,7 @@ package entgen
 import (
 	_ "embed"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/go-sphere/entc-extensions/entcrud/conf"
@@ -70,6 +71,7 @@ func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *
 
 	for _, act := range item.Actions {
 		pkgImports = append(pkgImports, inspect.ExtractImport(act))
+		pkgImports = append(pkgImports, setterImports(act)...)
 		funcContent, err := bind.GenBindFunc(act, item, item.CustomFieldConverters, strictTypeCheck)
 		if err != nil {
 			return err
@@ -80,6 +82,31 @@ func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *
 
 	file := gofile.CreateGoFile(pkgName, pkgImports, body.String())
 	return gofile.WriteFile(filename, []byte(file))
+}
+
+// setterImports returns the packages of named setter argument types declared
+// outside the action's own package, e.g. model.Nickname for a field declared
+// with field.String(...).GoType(model.Nickname("")). The generated conversion
+// references such types by name; goimports drops the ones left unused.
+func setterImports(action any) []inspect.Import {
+	var out []inspect.Import
+	t := reflect.PointerTo(reflect.TypeOf(action))
+	for i := range t.NumMethod() {
+		m := t.Method(i)
+		if !strings.HasPrefix(m.Name, "Set") || m.Type.NumIn() != 2 {
+			continue
+		}
+		arg := m.Type.In(1)
+		for arg.Kind() == reflect.Pointer || arg.Kind() == reflect.Slice {
+			arg = arg.Elem()
+		}
+		pkgName, _, ok := strings.Cut(arg.String(), ".")
+		if arg.PkgPath() == "" || !ok {
+			continue
+		}
+		out = append(out, inspect.Import{Path: arg.PkgPath(), Alias: pkgName})
+	}
+	return out
 }
 
 func collectImports(item *conf.EntityConf, extraImports []inspect.Import) []inspect.Import {

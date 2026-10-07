@@ -7,6 +7,7 @@ import (
 	entpb "github.com/go-sphere/entc-extensions/testdata/api/entpb"
 	ent "github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent"
 	user "github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/user"
+	model "github.com/go-sphere/entc-extensions/testdata/internal/pkg/model"
 )
 
 var (
@@ -58,6 +59,8 @@ func ToProtoUser(e *ent.User) (*entpb.User, error) {
 	v.Id = id
 	name := e.Name
 	v.Name = name
+	nickname := string(e.Nickname)
+	v.Nickname = nickname
 	if e.OptionalBirthday != nil {
 		optional_birthday := (*e.OptionalBirthday).Unix()
 		v.OptionalBirthday = new(optional_birthday)
@@ -85,7 +88,7 @@ func ToProtoUser(e *ent.User) (*entpb.User, error) {
 	v.Quota = quota
 	rank := int32(e.Rank)
 	v.Rank = rank
-	role := uint32(e.Role)
+	role := uint64(e.Role)
 	v.Role = role
 	score := e.Score
 	v.Score = score
@@ -110,6 +113,7 @@ func ToEntUser(v *entpb.User) (*ent.User, error) {
 	e.Email = v.Email
 	e.ID = int64(v.Id)
 	e.Name = v.Name
+	e.Nickname = model.Nickname(v.Nickname)
 	if v.OptionalBirthday != nil {
 		e.OptionalBirthday = new(time.Unix(*v.OptionalBirthday, 0))
 	}

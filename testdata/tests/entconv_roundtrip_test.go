@@ -48,6 +48,7 @@ func TestEntconvRoundTrip(t *testing.T) {
 		OptionalBirthday: new(now),
 		OptionalLevel:    new(user.OptionalLevelHigh),
 		OptionalNote:     new("memo"),
+		Nickname:         "ali",
 	}
 
 	pbUser, err := entmap.ToProtoUser(entUser)
@@ -67,6 +68,9 @@ func TestEntconvRoundTrip(t *testing.T) {
 	}
 	if backUser.Birthday.Unix() != entUser.Birthday.Unix() {
 		t.Fatalf("[entconv] user birthday round-trip mismatch: %v != %v", backUser.Birthday, entUser.Birthday)
+	}
+	if pbUser.Nickname != "ali" || backUser.Nickname != entUser.Nickname {
+		t.Fatalf("[entconv] named string GoType round-trip mismatch: pb=%q back=%q", pbUser.Nickname, backUser.Nickname)
 	}
 	if backUser.Rank != entUser.Rank || backUser.Quota != entUser.Quota {
 		t.Fatalf("[entconv] user rank/quota round-trip mismatch: %+v -> %+v", entUser, backUser)
