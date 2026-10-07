@@ -95,4 +95,4 @@ When debugging a generator change, run only the relevant step from `testdata/` r
 
 - After modifying a generator, you usually need to run the **full testdata pipeline** (`make regen`) because each generator consumes the previous one's output. Running only the affected module's `go test` will miss integration regressions.
 - The `entconv` module pulls `entproto` from `../entproto` via `replace` — when changing `entproto` public API, expect to update both at once.
-- `make lint` (and its `make lint-all` compatibility alias) runs `nilaway` with one excluded file (`internal/pkg/database/ent/enttest/enttest.go`); new nil-safety findings should be fixed, not excluded.
+- `make lint` (and its `make lint-all` compatibility alias) runs `nilaway` excluding only ent-generated files listed in `NILAWAY_EXCLUDE`; new nil-safety findings in hand-written code should be fixed, not excluded.

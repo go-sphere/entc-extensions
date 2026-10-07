@@ -64,6 +64,11 @@ build:
 
 test: regen verify
 
+# nilaway exclusions are ent-generated files only: enttest.go, and user/where.go,
+# whose GoType In/NotIn predicates index a variadic slice inside a loop bounded by
+# its length, which nilaway cannot prove safe.
+NILAWAY_EXCLUDE := internal/pkg/database/ent/enttest/enttest.go,internal/pkg/database/ent/user/where.go
+
 lint:
 	@set -eu; \
 	for dir in $(GO_PACKAGE_DIRS); do \
@@ -72,7 +77,7 @@ lint:
 		  $(GOLANGCI_LINT) fmt --no-config --enable gofmt --enable goimports --diff; \
 		  $(GO) vet ./...; \
 		  $(GOLANGCI_LINT) run --no-config; \
-		  $(NILAWAY) -exclude-errors-in-files internal/pkg/database/ent/enttest/enttest.go ./... ); \
+		  $(NILAWAY) -exclude-errors-in-files $(NILAWAY_EXCLUDE) ./... ); \
 	done
 
 # Backward-compatible alias.
