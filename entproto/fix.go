@@ -15,7 +15,9 @@ import (
 // neither a [Field] nor a [Skip] annotation: the ID gets [IDFieldNumber], and
 // other fields and edges get a number in the valid protobuf range derived from
 // a stable hash of the schema name, member kind, and member name, so numbers do
-// not change when members are added, removed, or reordered.
+// not change when members are added, removed, or reordered. Unannotated edges
+// to a schema marked with [SkipGen] get [Skip] instead of a number. Views and
+// edge schemas with a composite ID have no ID field to number.
 //
 // FixGraph stops at the first schema it cannot fix and returns an error: an
 // [*InvalidAnnotationError] for an undecodable Field annotation, or an error
@@ -54,8 +56,10 @@ func fixNode(node *gen.Type) error {
 	idGenerator := &fieldIDGenerator{schema: node.Name, exist: exist}
 
 	// Add annotation for ID field
-	if err := addAnnotationForID(node.ID, idGenerator); err != nil {
-		return err
+	if node.ID != nil {
+		if err := addAnnotationForID(node.ID, idGenerator); err != nil {
+			return err
+		}
 	}
 
 	// Add annotation for other fields
@@ -80,6 +84,16 @@ func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) error {
 	}
 	if ed.Annotations[FieldAnnotation] != nil || ed.Annotations[SkipAnnotation] != nil {
 		return nil
+	}
+	if ed.Type.Annotations[MessageAnnotation] != nil {
+		target, err := extractMessageAnnotation(ed.Type)
+		if err != nil {
+			return err
+		}
+		if !target.Generate {
+			ed.Annotations[SkipAnnotation] = Skip()
+			return nil
+		}
 	}
 	num, err := idGenerator.Next("edge", ed.Name)
 	if err != nil {
@@ -151,7 +165,7 @@ func stableFieldNumber(schema, kind, field string) int {
 
 func extractExistFieldID(node *gen.Type) (map[int]struct{}, error) {
 	existNums := map[int]struct{}{}
-	for _, fd := range append([]*gen.Field{node.ID}, node.Fields...) {
+	for _, fd := range fieldsWithID(node) {
 		num, ok, err := annotatedFieldNumber(fd.Annotations)
 		if err != nil {
 			return nil, &InvalidAnnotationError{Schema: node.Name, Field: fd.Name, Annotation: FieldAnnotation, Cause: err}

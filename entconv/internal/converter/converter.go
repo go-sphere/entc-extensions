@@ -55,12 +55,21 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 			return nil, err
 		}
 	case dpb.FieldDescriptorProto_TYPE_ENUM:
+		if !fld.IsEntEnum() {
+			// External proto enum (via entproto.EnumField): the ent field's
+			// GoType is the generated enum, so the conversion is identity.
+			return out, nil
+		}
 		enumName := fld.PbFieldDescriptor.GetEnumType().GetName()
 		method := fmt.Sprintf("ToProto%s_%s", typeName, enumName)
 		out.ToProtoConstructor = method
 	case dpb.FieldDescriptorProto_TYPE_MESSAGE:
 		switch {
 		case fld.IsEdgeField:
+			if fld.EntEdge.Type.ID == nil {
+				return nil, fmt.Errorf("entproto: edge %q targets %q, which has no single-field ID to convert",
+					fld.EntEdge.Name, fld.EntEdge.Type.Name)
+			}
 			if err := basicTypeConversion(fld.EdgeIDPbStructFieldDesc(), fld.EntEdge.Type.ID, out); err != nil {
 				return nil, err
 			}

@@ -7,6 +7,9 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/go-sphere/entc-extensions/entproto"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/model"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/typepb"
 )
 
 type User struct {
@@ -79,6 +82,16 @@ func (User) Fields() []ent.Field {
 		field.String("nickname").
 			GoType(model.Nickname("")).
 			Annotations(entproto.Field(23)),
+		field.JSON("timestamps", []*timestamppb.Timestamp{}).
+			Annotations(entproto.MessageField(24, &timestamppb.Timestamp{})),
+		field.Int32("null_marker").
+			GoType(structpb.NullValue(0)).
+			Annotations(entproto.EnumField(25, structpb.NullValue_NULL_VALUE)),
+		field.Int32("kind").
+			GoType(typepb.Field_Kind(0)).
+			Optional().
+			Nillable().
+			Annotations(entproto.EnumField(26, typepb.Field_TYPE_UNKNOWN)),
 	}
 }
 

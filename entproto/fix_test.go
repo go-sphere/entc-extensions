@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
 )
@@ -248,4 +249,84 @@ func fieldNumbers(t *testing.T, node *gen.Type) map[string]int {
 		result[fld.Name] = annotation.Number
 	}
 	return result
+}
+
+func TestFixGraph_SkipsUnannotatedEdgesToSkipGenSchemas(t *testing.T) {
+	hidden := &gen.Type{
+		Name:        "Hidden",
+		ID:          &gen.Field{Name: "id", Type: &field.TypeInfo{Type: field.TypeInt64}},
+		Annotations: map[string]any{MessageAnnotation: SkipGen()},
+	}
+	g := autoFillGraph("name")
+	user := g.Nodes[0]
+	user.Edges = []*gen.Edge{
+		{Name: "hidden", Type: hidden},
+		{Name: "pinned", Type: hidden, Annotations: map[string]any{FieldAnnotation: Field(5)}},
+	}
+	g.Nodes = append(g.Nodes, hidden)
+
+	if err := FixGraph(g); err != nil {
+		t.Fatalf("FixGraph failed: %v", err)
+	}
+	if _, skipped := user.Edges[0].Annotations[SkipAnnotation]; !skipped {
+		t.Fatal("unannotated edge to a SkipGen schema was not marked Skip")
+	}
+	if _, numbered := user.Edges[0].Annotations[FieldAnnotation]; numbered {
+		t.Fatal("unannotated edge to a SkipGen schema was numbered")
+	}
+	if _, skipped := user.Edges[1].Annotations[SkipAnnotation]; skipped {
+		t.Fatal("explicitly numbered edge must keep its annotation")
+	}
+}
+
+func TestFixGraphAndLoadAdapter_SchemasWithoutIDField(t *testing.T) {
+	g, err := entc.LoadGraph("./testdata/schema/noid", &gen.Config{Package: "example.com/app/ent"})
+	if err != nil {
+		t.Fatalf("LoadGraph failed: %v", err)
+	}
+	if err := FixGraph(g); err != nil {
+		t.Fatalf("FixGraph failed: %v", err)
+	}
+	a, err := LoadAdapter(g)
+	if err != nil {
+		t.Fatalf("LoadAdapter failed: %v", err)
+	}
+	for name, fields := range map[string][]string{
+		"Friendship": {"user_id", "friend_id"},
+		"UserView":   {"name"},
+	} {
+		md, err := a.GetMessageDescriptor(name)
+		if err != nil {
+			t.Fatalf("GetMessageDescriptor(%s) failed: %v", name, err)
+		}
+		if md.FindFieldByName("id") != nil {
+			t.Fatalf("%s has an id field, want none", name)
+		}
+		for _, f := range fields {
+			if md.FindFieldByName(f) == nil {
+				t.Fatalf("%s is missing field %s", name, f)
+			}
+		}
+		fm, err := a.FieldMap(name)
+		if err != nil {
+			t.Fatalf("FieldMap(%s) failed: %v", name, err)
+		}
+		if fm.ID() != nil {
+			t.Fatalf("FieldMap(%s).ID() = %v, want nil", name, fm.ID())
+		}
+	}
+	fm, err := a.FieldMap("User")
+	if err != nil {
+		t.Fatalf("FieldMap(User) failed: %v", err)
+	}
+	friendships := fm["friendships"]
+	if friendships == nil || !friendships.IsEdgeField {
+		t.Fatalf("User.friendships edge missing from field map: %v", fm)
+	}
+	if got := friendships.EdgeIDPbStructField(); got != "" {
+		t.Fatalf("EdgeIDPbStructField() = %q, want empty for a composite-ID target", got)
+	}
+	if friendships.EdgeIDPbStructFieldDesc() != nil {
+		t.Fatal("EdgeIDPbStructFieldDesc() must be nil for a composite-ID target")
+	}
 }

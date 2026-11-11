@@ -57,6 +57,7 @@ func main() {
 **How `WithAutoFill()` works:**
 - Schemas without `entproto.Message()` annotation automatically get one
 - Fields/edges without `entproto.Field()` annotation are assigned deterministic numbers derived from the schema, member kind, and member name (the ID field uses 1)
+- Edges without annotations that point to an `entproto.SkipGen()` schema are marked `entproto.Skip()`
 - No need to manually annotate every schema and field
 
 The generated number for an existing field does not change when another field is inserted or declarations are reordered. Renaming a field changes its identity, so pin its previous number with `entproto.Field(number)` before renaming. The generator reports the rare case where two members derive the same number instead of silently producing an invalid schema.
@@ -218,7 +219,7 @@ func (User) Fields() []ent.Field {
 }
 ```
 
-The ID field is added to the generated message as well, in the above example it is implicitly defined, but `entproto` will respect explicitly defined ID fields as well. The above schema would translate to:
+The ID field is added to the generated message as well, in the above example it is implicitly defined, but `entproto` will respect explicitly defined ID fields as well. Views (`ent.View`) and edge schemas with a composite ID have no ID field, so their messages contain only their fields and edges. The above schema would translate to:
 
 ```proto
 message User {
@@ -280,7 +281,17 @@ field.JSON("created", &timestamppb.Timestamp{}).
     Annotations(entproto.MessageField(5, &timestamppb.Timestamp{}))
 ```
 
-This emits `import "google/protobuf/timestamp.proto";` and `google.protobuf.Timestamp created = 5;`. The referenced file is not written by `entproto`.
+This emits `import "google/protobuf/timestamp.proto";` and `google.protobuf.Timestamp created = 5;`. The referenced file is not written by `entproto`. A JSON field whose Go type is a slice (other than `[]byte`) becomes a `repeated` field, for example `field.JSON("times", []*timestamppb.Timestamp{})`.
+
+`entproto.EnumField` does the same for an enum defined in another `.proto` file. Use it on an integer field whose `GoType` is the generated enum, so ent and protobuf share one Go type:
+
+```go
+field.Int32("null_marker").
+    GoType(structpb.NullValue(0)).
+    Annotations(entproto.EnumField(6, structpb.NullValue_NULL_VALUE))
+```
+
+To reference an external type by name with `entproto.TypeName`, register it first from the `entc` program with `entproto.RegisterCustomType` or `entproto.RegisterCustomEnum`. `TypeName` otherwise only accepts the full name of a generated schema message (`entpb.User`) or of an enum nested in one (`entpb.User.Status`). Types from `.proto` files without a `package` statement are not supported.
 
 ### Proto3 Optional Support
 

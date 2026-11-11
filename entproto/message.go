@@ -37,7 +37,8 @@ func Message(opts ...MessageOption) schema.Annotation {
 // SkipGen annotates an ent schema so no protobuf message is generated for it,
 // even with [WithAutoFill]. Use it to override a [Message] annotation inherited
 // from a mixin. Edges from generated schemas to a SkipGen schema must be
-// annotated with [Skip], otherwise generation fails.
+// annotated with [Skip], otherwise generation fails; [WithAutoFill] adds Skip
+// to such edges that have no [Field] annotation.
 func SkipGen() schema.Annotation {
 	return message{
 		Generate: false,

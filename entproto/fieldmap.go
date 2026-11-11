@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"entgo.io/ent/entc/gen"
+	"entgo.io/ent/schema/field"
 	"github.com/jhump/protoreflect/desc" //nolint:staticcheck // Adapter APIs still expose jhump v1 descriptors.
 	"google.golang.org/protobuf/types/descriptorpb"
 )
@@ -94,8 +95,18 @@ func (d *FieldMappingDescriptor) PbStructField() string {
 
 // PbFieldName returns the same Go struct field name as
 // [FieldMappingDescriptor.PbStructField].
+//
+// Deprecated: Use [FieldMappingDescriptor.PbStructField].
 func (d *FieldMappingDescriptor) PbFieldName() string {
 	return d.PbStructField()
+}
+
+// IsEntEnum reports whether the field maps an ent enum field to the nested
+// protobuf enum entproto generates for it, as opposed to an external enum
+// referenced with [EnumField] or [TypeName]. Only such fields have values
+// numbered by an [Enum] annotation.
+func (d *FieldMappingDescriptor) IsEntEnum() bool {
+	return d.IsEnumField && d.EntField != nil && d.EntField.Type.Type == field.TypeEnum
 }
 
 // IsProto3Optional reports whether the protobuf field is a proto3 optional
@@ -142,22 +153,31 @@ func (d *FieldMappingDescriptor) IsProto3OptionalPointer() bool {
 }
 
 // EdgeIDPbStructField returns the Go struct field name of the ID field of the
-// entity this edge refers to. It panics if the descriptor is not an edge.
+// entity this edge refers to, or "" if that entity has no single-field ID (a
+// view or an edge schema with a composite ID). It panics if the descriptor is
+// not an edge.
 func (d *FieldMappingDescriptor) EdgeIDPbStructField() string {
-	return camelCase(d.EntEdge.Type.ID.Name)
+	id := d.EntEdge.Type.ID
+	if id == nil {
+		return ""
+	}
+	return camelCase(id.Name)
 }
 
 // EdgeIDPbStructFieldDesc returns the protobuf field descriptor for the ID
 // field of the message this edge refers to, or nil if that message has no
 // such field. It panics if the descriptor is not an edge.
 func (d *FieldMappingDescriptor) EdgeIDPbStructFieldDesc() *desc.FieldDescriptor {
-	return d.ReferencedPbType.FindFieldByName(d.EntEdge.Type.ID.Name)
+	id := d.EntEdge.Type.ID
+	if id == nil {
+		return nil
+	}
+	return d.ReferencedPbType.FindFieldByName(id.Name)
 }
 
 func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (FieldMap, error) {
 	fieldByName := make(map[string]*gen.Field, len(entType.Fields)+1)
-	fieldByName[entType.ID.Name] = entType.ID
-	for _, fld := range entType.Fields {
+	for _, fld := range fieldsWithID(entType) {
 		fieldByName[fld.Name] = fld
 	}
 	edgeByName := make(map[string]*gen.Edge, len(entType.Edges))
@@ -169,7 +189,7 @@ func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (
 	for _, fld := range pbType.GetFields() {
 		fd := &FieldMappingDescriptor{
 			PbFieldDescriptor: fld,
-			IsIDField:         fld.GetName() == entType.ID.Name,
+			IsIDField:         entType.ID != nil && fld.GetName() == entType.ID.Name,
 			IsEnumField:       fld.GetEnumType() != nil,
 		}
 		edg, isEdge := edgeByName[fld.GetName()]

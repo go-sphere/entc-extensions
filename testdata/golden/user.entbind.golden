@@ -114,6 +114,19 @@ func CreateUser(source *ent.UserCreate, target *entpb.User, options ...Option) *
 			source.SetNickname(model.Nickname(target.Nickname))
 		}
 	}
+	if option.CanSetField(user.FieldTimestamps) {
+		if option.CanSetZero(user.FieldTimestamps) || target.Timestamps != nil {
+			source.SetTimestamps(target.Timestamps)
+		}
+	}
+	if option.CanSetField(user.FieldNullMarker) {
+		if option.CanSetZero(user.FieldNullMarker) || target.NullMarker != 0 {
+			source.SetNullMarker(target.NullMarker)
+		}
+	}
+	if option.CanSetField(user.FieldKind) {
+		source.SetNillableKind(target.Kind)
+	}
 	return source
 }
 
@@ -229,6 +242,23 @@ func UpdateOneUser(source *ent.UserUpdateOne, target *entpb.User, options ...Opt
 	if option.CanSetField(user.FieldNickname) {
 		if option.CanSetZero(user.FieldNickname) || target.Nickname != "" {
 			source.SetNickname(model.Nickname(target.Nickname))
+		}
+	}
+	if option.CanSetField(user.FieldTimestamps) {
+		if option.CanSetZero(user.FieldTimestamps) || target.Timestamps != nil {
+			source.SetTimestamps(target.Timestamps)
+		}
+	}
+	if option.CanSetField(user.FieldNullMarker) {
+		if option.CanSetZero(user.FieldNullMarker) || target.NullMarker != 0 {
+			source.SetNullMarker(target.NullMarker)
+		}
+	}
+	if option.CanSetField(user.FieldKind) {
+		if target.Kind == nil && option.ClearOnNil(user.FieldKind) {
+			source.ClearKind()
+		} else {
+			source.SetNillableKind(target.Kind)
 		}
 	}
 	return source

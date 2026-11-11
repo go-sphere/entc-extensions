@@ -3,6 +3,12 @@ syntax = "proto3";
 
 package entpb;
 
+import "google/protobuf/struct.proto";
+
+import "google/protobuf/timestamp.proto";
+
+import "google/protobuf/type.proto";
+
 option go_package = "github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/proto/entpb";
 
 message Group {
@@ -99,6 +105,12 @@ message User {
   optional OptionalLevel optional_level = 22;
 
   string nickname = 23;
+
+  repeated google.protobuf.Timestamp timestamps = 24;
+
+  google.protobuf.NullValue null_marker = 25;
+
+  optional google.protobuf.Field.Kind kind = 26;
 
   repeated Post posts = 16;
 

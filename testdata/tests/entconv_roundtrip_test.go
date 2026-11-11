@@ -10,6 +10,9 @@ import (
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/database/ent/user"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/render/entbind"
 	"github.com/go-sphere/entc-extensions/testdata/internal/pkg/render/entmap"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/typepb"
 )
 
 func TestGeneratedSymbolsExist(t *testing.T) {
@@ -49,6 +52,9 @@ func TestEntconvRoundTrip(t *testing.T) {
 		OptionalLevel:    new(user.OptionalLevelHigh),
 		OptionalNote:     new("memo"),
 		Nickname:         "ali",
+		Timestamps:       []*timestamppb.Timestamp{timestamppb.New(now)},
+		NullMarker:       structpb.NullValue_NULL_VALUE,
+		Kind:             new(typepb.Field_TYPE_STRING),
 	}
 
 	pbUser, err := entmap.ToProtoUser(entUser)
@@ -74,6 +80,17 @@ func TestEntconvRoundTrip(t *testing.T) {
 	}
 	if backUser.Rank != entUser.Rank || backUser.Quota != entUser.Quota {
 		t.Fatalf("[entconv] user rank/quota round-trip mismatch: %+v -> %+v", entUser, backUser)
+	}
+	if len(pbUser.Timestamps) != 1 || len(backUser.Timestamps) != 1 ||
+		!backUser.Timestamps[0].AsTime().Equal(now) {
+		t.Fatalf("[entconv] repeated message field round-trip mismatch: pb=%v back=%v", pbUser.Timestamps, backUser.Timestamps)
+	}
+	if pbUser.NullMarker != structpb.NullValue_NULL_VALUE || backUser.NullMarker != entUser.NullMarker {
+		t.Fatalf("[entconv] external enum round-trip mismatch: pb=%v back=%v", pbUser.NullMarker, backUser.NullMarker)
+	}
+	if pbUser.Kind == nil || *pbUser.Kind != typepb.Field_TYPE_STRING ||
+		backUser.Kind == nil || *backUser.Kind != *entUser.Kind {
+		t.Fatalf("[entconv] optional external enum round-trip mismatch: pb=%v back=%v", pbUser.Kind, backUser.Kind)
 	}
 	if len(backUser.Tags) != 2 || len(backUser.Points) != 3 {
 		t.Fatalf("[entconv] user json fields round-trip mismatch: tags=%v points=%v", backUser.Tags, backUser.Points)
@@ -115,6 +132,9 @@ func TestEntconvRoundTrip(t *testing.T) {
 	}
 	if withoutNote.OptionalBlob != nil {
 		t.Fatalf("[entconv] nil optional blob became present: %v", withoutNote.OptionalBlob)
+	}
+	if withoutNote.Kind != nil {
+		t.Fatalf("[entconv] nil optional external enum became present: %v", *withoutNote.Kind)
 	}
 	if withoutNote.OptionalCount != nil || withoutNote.OptionalBirthday != nil || withoutNote.OptionalLevel != nil {
 		t.Fatalf("[entconv] nil optional scalar became present: count=%v birthday=%v level=%v", withoutNote.OptionalCount, withoutNote.OptionalBirthday, withoutNote.OptionalLevel)

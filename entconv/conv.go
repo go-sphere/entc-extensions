@@ -580,7 +580,7 @@ func validateProtoContracts(types []generator.TypeInfo, adapter *entproto.Adapte
 			actualFields[protoField.Name] = protoField.Type
 		}
 		for _, mapping := range fieldMap.Fields() {
-			fieldName := mapping.PbFieldName()
+			fieldName := mapping.PbStructField()
 			expected := expectedProtoGoType(mapping)
 			actual, ok := actualFields[fieldName]
 			if !ok {
@@ -591,7 +591,7 @@ func validateProtoContracts(types []generator.TypeInfo, adapter *entproto.Adapte
 					Message: typeInfo.MessageName, Field: fieldName, Expected: expected, Actual: actual,
 				}
 			}
-			if err := validateMessageFieldEntShape(typeInfo, mapping, expected); err != nil {
+			if err := validateExternalTypeEntShape(typeInfo, mapping, expected); err != nil {
 				return err
 			}
 			// Fail before any file is written when a field's custom Go type has
@@ -690,24 +690,42 @@ func normalizePolicy(v MissingProtoPolicy) MissingProtoPolicy {
 // can assign directly (the generator emits an identity assignment for these).
 // The ent field is typically a JSON column typed as the same generated Go
 // message. A mismatch here would silently produce code that does not compile.
-func validateMessageFieldEntShape(typeInfo generator.TypeInfo, mapping *entproto.FieldMappingDescriptor, pbGoType string) error {
-	if mapping.PbFieldDescriptor.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
-		mapping.IsEdgeField || mapping.EntField == nil {
+// validateExternalTypeEntShape checks the ent side of fields the converter
+// assigns directly: message fields (entproto.MessageField on a JSON column)
+// and external enums (entproto.EnumField on a field whose GoType is the
+// generated enum).
+func validateExternalTypeEntShape(typeInfo generator.TypeInfo, mapping *entproto.FieldMappingDescriptor, pbGoType string) error {
+	if mapping.IsEdgeField || mapping.EntField == nil {
+		return nil
+	}
+	var kind string
+	switch {
+	case mapping.PbFieldDescriptor.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		kind = "message"
+	case mapping.IsEnumField && !mapping.IsEntEnum():
+		kind = "external enum"
+		// A nillable ent field holds the same pointer protoc-gen-go uses for
+		// the proto3 optional field, but ent reports the element type.
+		if mapping.EntField.Nillable {
+			pbGoType = strings.TrimPrefix(pbGoType, "*")
+		}
+	default:
 		return nil
 	}
 	entType := mapping.EntField.Type.String()
 	if entType == "" {
 		return nil
 	}
-	// ent JSON columns carry the Go type in Ident (e.g. *timestamppb.Timestamp);
-	// basic scalar columns have no Go type and cannot hold a message.
+	// ent JSON columns and GoType fields carry the Go type in Ident (e.g.
+	// *timestamppb.Timestamp); basic scalar columns have no Go type and cannot
+	// hold a message or an external enum.
 	if canonicalProtoGoType(entType) != canonicalProtoGoType(pbGoType) {
 		return &ProtoFieldContractError{
 			Message: typeInfo.MessageName,
 			Field:   mapping.PbFieldDescriptor.GetName(),
 			Expected: fmt.Sprintf(
-				"ent field of Go type compatible with %s (message field; converter assigns it directly)",
-				pbGoType,
+				"ent field of Go type compatible with %s (%s field; converter assigns it directly)",
+				pbGoType, kind,
 			),
 			Actual: entType,
 		}
@@ -745,7 +763,7 @@ func validateEnumConstReferences(types []generator.TypeInfo, adapter *entproto.A
 		}
 		for _, mapping := range fieldMap.Enums() {
 			entField := mapping.EntField
-			if entField == nil {
+			if entField == nil || !mapping.IsEntEnum() {
 				continue
 			}
 			for _, opt := range entField.Enums {

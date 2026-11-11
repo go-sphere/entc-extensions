@@ -163,6 +163,9 @@ func TestLoadAdapter_MessageField(t *testing.T) {
 	if _, all := a.AllFileDescriptors()[stubFile]; !all {
 		t.Fatalf("AllFileDescriptors should still expose the stub for linking; missing %s", stubFile)
 	}
+	if _, global := lookupRegisteredCustomType("google.protobuf.Timestamp"); global {
+		t.Fatal("LoadAdapter must not write MessageField types to the process-wide registry")
+	}
 }
 
 func TestRegisterCustomType_FromMessage(t *testing.T) {
@@ -171,14 +174,14 @@ func TestRegisterCustomType_FromMessage(t *testing.T) {
 
 	RegisterCustomType(&timestamppb.Timestamp{})
 
-	entry, ok := lookupCustomType("google.protobuf.Timestamp")
+	entry, ok := lookupRegisteredCustomType("google.protobuf.Timestamp")
 	if !ok {
 		t.Fatalf("expected google.protobuf.Timestamp to be registered")
 	}
 	if entry.ProtoFile != "google/protobuf/timestamp.proto" {
 		t.Fatalf("ProtoFile=%q, want google/protobuf/timestamp.proto", entry.ProtoFile)
 	}
-	if entry.ProtoPackage != "google.protobuf" || entry.MessageName != "Timestamp" {
+	if entry.ProtoPackage != "google.protobuf" || entry.Path != "Timestamp" || entry.Enum {
 		t.Fatalf("entry=%+v, want pkg=google.protobuf name=Timestamp", entry)
 	}
 
@@ -186,7 +189,7 @@ func TestRegisterCustomType_FromMessage(t *testing.T) {
 	RegisterCustomType(&timestamppb.Timestamp{})
 
 	// Lookup also accepts a leading dot.
-	if _, ok := lookupCustomType(".google.protobuf.Timestamp"); !ok {
+	if _, ok := lookupRegisteredCustomType(".google.protobuf.Timestamp"); !ok {
 		t.Fatalf("lookup with leading dot failed")
 	}
 }
@@ -203,9 +206,11 @@ func TestRegisterCustomType_NilPanics(t *testing.T) {
 func TestAddCustomTypeToStub_AggregatesTopLevelAndNestedMessages(t *testing.T) {
 	files := map[string]*descriptorpb.FileDescriptorProto{}
 	entries := []customTypeEntry{
-		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", MessageName: "User", MessagePath: "User"},
-		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", MessageName: "Address", MessagePath: "Address"},
-		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", MessageName: "Inner", MessagePath: "Outer.Inner"},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", Path: "User"},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", Path: "Address"},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", Path: "Outer.Inner"},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", Path: "Status", Enum: true},
+		{ProtoFile: "shared/v1/types.proto", ProtoPackage: "shared.v1", Path: "Outer.Kind", Enum: true},
 	}
 	for _, entry := range entries {
 		if err := addCustomTypeToStub(files, entry); err != nil {
@@ -223,6 +228,12 @@ func TestAddCustomTypeToStub_AggregatesTopLevelAndNestedMessages(t *testing.T) {
 	outer := findMessage(stub.MessageType, "Outer")
 	if outer == nil || findMessage(outer.NestedType, "Inner") == nil {
 		t.Fatalf("nested message Outer.Inner missing from stub: %v", stub)
+	}
+	if len(stub.EnumType) != 1 || stub.EnumType[0].GetName() != "Status" || len(stub.EnumType[0].Value) != 1 {
+		t.Fatalf("top-level enum Status missing from stub: %v", stub.EnumType)
+	}
+	if len(outer.EnumType) != 1 || outer.EnumType[0].GetName() != "Kind" {
+		t.Fatalf("nested enum Outer.Kind missing from stub: %v", outer.EnumType)
 	}
 }
 
@@ -265,9 +276,10 @@ func TestLinkDependencyError_MessageFieldReference(t *testing.T) {
 	}
 	graph := &gen.Graph{Nodes: []*gen.Type{a, b}}
 	adapter := &Adapter{
-		graph:      graph,
-		nodeByName: map[string]*gen.Type{"A": a, "B": b},
-		errors:     map[string]error{"B": errors.New("unsupported field type")},
+		graph:            graph,
+		nodeByName:       map[string]*gen.Type{"A": a, "B": b},
+		schemaByFullName: map[string]*gen.Type{"entpb.A": a, "entpb.B": b},
+		errors:           map[string]error{"B": errors.New("unsupported field type")},
 	}
 
 	err := adapter.linkDependencyError()

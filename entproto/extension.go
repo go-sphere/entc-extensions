@@ -84,7 +84,8 @@ func WithProtoDir(dir string) ExtensionOption {
 // its schema, kind, and name. Existing annotations are kept; schemas marked
 // with [SkipGen] are left untouched. A hash collision with an existing number
 // fails generation and must be resolved by annotating the colliding members
-// explicitly. AutoFill also suppresses the warning about unannotated schemas.
+// explicitly. Unannotated edges to [SkipGen] schemas are marked with [Skip].
+// AutoFill also suppresses the warning about unannotated schemas.
 func WithAutoFill() ExtensionOption {
 	return func(e *Extension) {
 		e.autoFill = true

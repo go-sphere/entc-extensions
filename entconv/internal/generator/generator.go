@@ -289,7 +289,10 @@ func (g *Generator) Imports() ([]string, error) {
 			seen[ti.PkgPath] = struct{}{}
 			imp = append(imp, fmt.Sprintf(`%s "%s"`, ti.PkgName, ti.PkgPath))
 		}
-		for range fieldMap.Enums() {
+		for _, f := range fieldMap.Enums() {
+			if !f.IsEntEnum() {
+				continue
+			}
 			enumPkg, err := g.entEnumPkg(t.Type.Name)
 			if err != nil {
 				return nil, fmt.Errorf("resolving enum package for %s while collecting imports: %w", t.Type.Name, err)

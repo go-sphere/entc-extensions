@@ -5,8 +5,9 @@
 {{ range $idx, $typeInfo := .Types }}
 {{ $fieldMap := getFieldMap $typeInfo.Type.Name }}
 
-{{/* Generate enums for each type */}}
+{{/* Generate enums for each type; external enums are assigned directly */}}
 {{ range $fieldMap.Enums }}
+{{- if .IsEntEnum }}
 {{ $enumType := .PbFieldDescriptor.GetEnumType }}
 {{ $enumName := printf "%s_%s" $typeInfo.Type.Name $enumType.GetName }}
 {{ $pbEnumIdent := protoIdent $enumName }}
@@ -44,6 +45,7 @@ func ToEnt{{ $enumName }}(e {{ ident $pbEnumIdent }}) {{ ident $entEnumIdent }} 
     return ""
 }
 {{- end }}
+{{- end }}
 
 func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name }}) (*{{ protoIdent $typeInfo.Type.Name }}, error) {
     if e == nil {
@@ -76,9 +78,9 @@ func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name 
     {{ $varName }} := {{ $f }}
     {{- end }}
     {{- if .IsProto3OptionalPointer }}
-    v.{{ .PbFieldName }} = new({{ $varName }})
+    v.{{ .PbStructField }} = new({{ $varName }})
     {{- else }}
-    v.{{ .PbFieldName }} = {{ $varName }}
+    v.{{ .PbStructField }} = {{ $varName }}
     {{- end }}
     {{- if .EntField.Nillable }}
     }
@@ -95,7 +97,7 @@ func ToEnt{{ $typeInfo.Type.Name }}(v *{{ protoIdent $typeInfo.Type.Name }}) (*{
     e := &{{ entPackageIdent $typeInfo.Type.Name }}{}
     {{- range $fieldMap.Fields }}
     {{- $fieldName := .EntField.StructField }}
-    {{- $pbField := .PbFieldName }}
+    {{- $pbField := .PbStructField }}
     {{- $pbValue := printf "v.%s" $pbField }}
     {{- if .IsProto3Optional }}
     if v.{{ $pbField }} != nil {

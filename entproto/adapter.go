@@ -36,9 +36,10 @@ var ErrSchemaSkipped = errors.New("entproto: schema not annotated with Generate=
 
 // LoadAdapter converts every schema in graph into protobuf descriptors without
 // writing files. It reads annotations as they are; call [FixGraph] first to get
-// [WithAutoFill] behavior. Neither the graph nor its annotations are modified,
-// but [MessageField] annotations register their types in the process-wide
-// [RegisterCustomType] registry.
+// [WithAutoFill] behavior. Neither the graph, its annotations, nor the
+// process-wide [RegisterCustomType] registry is modified; types referenced by
+// [MessageField] and [EnumField] annotations are resolved for this Adapter
+// only.
 //
 // Per-schema conversion failures do not fail LoadAdapter; they are reported
 // later by [Adapter.GetFileDescriptor] for that schema. LoadAdapter returns an
@@ -49,6 +50,8 @@ func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 		graph:            graph,
 		nodeByName:       make(map[string]*gen.Type, len(graph.Nodes)),
 		protoPkgByType:   make(map[string]string, len(graph.Nodes)),
+		schemaByFullName: make(map[string]*gen.Type, len(graph.Nodes)),
+		customTypes:      make(map[string]customTypeEntry),
 		descriptors:      make(map[string]*desc.FileDescriptor),
 		schemaProtoFiles: make(map[string]string),
 		externalFiles:    make(map[string]struct{}),
@@ -68,14 +71,20 @@ func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 // descriptors returned by its methods are shared with the Adapter and must not
 // be modified by callers.
 type Adapter struct {
-	graph            *gen.Graph
-	nodeByName       map[string]*gen.Type
-	protoPkgByType   map[string]string
+	graph          *gen.Graph
+	nodeByName     map[string]*gen.Type
+	protoPkgByType map[string]string
+	// schemaByFullName maps the full protobuf name of every generated schema
+	// message, such as "entpb.User", to its schema.
+	schemaByFullName map[string]*gen.Type
+	// customTypes holds the external types referenced by MessageField and
+	// EnumField annotations, keyed by full name without a leading dot.
+	customTypes      map[string]customTypeEntry
 	descriptors      map[string]*desc.FileDescriptor
 	schemaProtoFiles map[string]string
 	// externalFiles holds proto file paths that were synthesised purely to
-	// satisfy cross-file linking for RegisterCustomType references. They must
-	// not be written to disk.
+	// satisfy cross-file linking for external type references. They must not
+	// be written to disk.
 	externalFiles map[string]struct{}
 	errors        map[string]error
 }
@@ -91,7 +100,7 @@ func (a *Adapter) AllFileDescriptors() map[string]*desc.FileDescriptor {
 
 // GeneratedFileDescriptors returns the file descriptors that entproto owns and
 // writes to disk, keyed by .proto file name, excluding stubs synthesised for
-// [RegisterCustomType] dependencies.
+// external types.
 func (a *Adapter) GeneratedFileDescriptors() map[string]*desc.FileDescriptor {
 	if len(a.externalFiles) == 0 {
 		return a.descriptors
@@ -129,7 +138,11 @@ func (a *Adapter) parse() error {
 	protoPackages := make(map[string]*descriptorpb.FileDescriptorProto)
 	customStubs := map[string]*descriptorpb.FileDescriptorProto{}
 
+	a.indexGraph()
 	for _, genType := range a.graph.Nodes {
+		if _, failed := a.errors[genType.Name]; failed {
+			continue
+		}
 		messageDescriptor, err := a.toProtoMessageDescriptor(genType)
 
 		// store specific message parse failures
@@ -221,8 +234,94 @@ func (a *Adapter) parse() error {
 	return nil
 }
 
+// indexGraph records the full protobuf name of every generated schema and the
+// external types referenced by MessageField and EnumField annotations, so
+// references resolve regardless of schema order. Annotation decode errors are
+// left for the conversion to report.
+func (a *Adapter) indexGraph() {
+	for _, node := range a.graph.Nodes {
+		if node.Annotations[MessageAnnotation] == nil {
+			continue
+		}
+		msgAnnot, err := extractMessageAnnotation(node)
+		if err != nil || !msgAnnot.Generate {
+			continue
+		}
+		pkg, err := a.protoPackageName(node)
+		if err != nil {
+			continue
+		}
+		a.schemaByFullName[pkg+"."+node.Name] = node
+		if err := a.collectCustomTypes(node); err != nil {
+			a.errors[node.Name] = err
+		}
+	}
+}
+
+func (a *Adapter) collectCustomTypes(node *gen.Type) error {
+	for _, f := range fieldsWithID(node) {
+		if _, skip := f.Annotations[SkipAnnotation]; skip {
+			continue
+		}
+		if _, ok := f.Annotations[FieldAnnotation]; !ok {
+			continue
+		}
+		ann, err := extractFieldAnnotation(f)
+		if err != nil || ann.ProtoFile == "" {
+			continue
+		}
+		isEnum := ann.Type == descriptorpb.FieldDescriptorProto_TYPE_ENUM
+		if !isEnum && ann.Type != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			continue
+		}
+		fullName := strings.TrimPrefix(ann.TypeName, ".")
+		if fullName == "" || ann.ProtoPackage == "" || ann.MessagePath == "" {
+			return fmt.Errorf("entproto: field %q has an incomplete external type annotation; use entproto.MessageField or entproto.EnumField", f.Name)
+		}
+		entry := customTypeEntry{
+			ProtoFile:    ann.ProtoFile,
+			ProtoPackage: ann.ProtoPackage,
+			Path:         strings.TrimPrefix(ann.MessagePath, "."),
+			Enum:         isEnum,
+		}
+		if existing, ok := a.lookupCustomType(fullName); ok && existing != entry {
+			return fmt.Errorf("field %q: %w", f.Name, customTypeConflict(fullName, existing, entry))
+		}
+		a.customTypes[fullName] = entry
+	}
+	return nil
+}
+
+// lookupCustomType resolves an external type referenced by an annotation of
+// this graph, then one registered process-wide. The name may carry a leading
+// dot.
+func (a *Adapter) lookupCustomType(protoTypeName string) (customTypeEntry, bool) {
+	if entry, ok := a.customTypes[strings.TrimPrefix(protoTypeName, ".")]; ok {
+		return entry, true
+	}
+	return lookupRegisteredCustomType(protoTypeName)
+}
+
+// referencedSchema returns the generated schema that defines typeName: the
+// message itself or, for an enum, the message the enum is nested in; nil when
+// no generated schema does. A name without a leading dot is relative to
+// selfPkg.
+func (a *Adapter) referencedSchema(selfPkg, typeName string, isEnum bool) *gen.Type {
+	name, absolute := strings.CutPrefix(typeName, ".")
+	if !absolute {
+		name = selfPkg + "." + typeName
+	}
+	if isEnum {
+		i := strings.LastIndex(name, ".")
+		if i < 0 {
+			return nil
+		}
+		name = name[:i]
+	}
+	return a.schemaByFullName[name]
+}
+
 func (a *Adapter) goPackageName(protoPkgName string) string {
-	// TODO(rotemtam): make this configurable from an annotation
 	entBase := a.graph.Package
 	slashed := strings.ReplaceAll(protoPkgName, ".", "/")
 	return path.Join(entBase, "proto", slashed)
@@ -291,8 +390,7 @@ func (a *Adapter) linkDependencyError() error {
 
 // fieldReferencedSchema returns the name of a schema referenced by a
 // message/enum-typed field annotation, or "" when the field does not reference a
-// graph schema. External custom types registered via RegisterCustomType are not
-// graph schemas and are ignored.
+// graph schema. External types are not graph schemas and are ignored.
 func (a *Adapter) fieldReferencedSchema(f *gen.Field) string {
 	if f == nil {
 		return ""
@@ -307,13 +405,15 @@ func (a *Adapter) fieldReferencedSchema(f *gen.Field) string {
 	if err != nil || ann.TypeName == "" {
 		return ""
 	}
-	if ann.Type != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
-		ann.Type != descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+	isEnum := ann.Type == descriptorpb.FieldDescriptorProto_TYPE_ENUM
+	if !isEnum && ann.Type != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
 		return ""
 	}
-	name := protoTypeShortName(ann.TypeName)
-	if _, ok := a.nodeByName[name]; ok {
-		return name
+	if _, ok := a.lookupCustomType(ann.TypeName); ok {
+		return ""
+	}
+	if node := a.referencedSchema("", normalizeCustomTypeName(ann.TypeName), isEnum); node != nil {
+		return node.Name
 	}
 	return ""
 }
@@ -375,37 +475,41 @@ func relFileName(packageName string) *string {
 func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.DescriptorProto, customStubs map[string]*descriptorpb.FileDescriptorProto) ([]string, error) {
 	var out []string
 	for _, fld := range m.Field {
-		if fld.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+		isEnum := fld.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM
+		if !isEnum && fld.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
 			continue
 		}
-		fieldTypeName := fld.GetTypeName()
-		if entry, ok := lookupCustomType(fieldTypeName); ok {
+		typeName := fld.GetTypeName()
+		if entry, ok := a.lookupCustomType(typeName); ok {
+			if entry.Enum != isEnum {
+				return nil, fmt.Errorf("entproto: field %q uses %s as %s, but it is registered as %s",
+					fld.GetName(), strings.TrimPrefix(typeName, "."), fld.GetType(), entry.kind())
+			}
 			if err := addCustomTypeToStub(customStubs, entry); err != nil {
 				return nil, err
 			}
 			out = append(out, entry.ProtoFile)
 			continue
 		}
-		depTypeName := protoTypeShortName(fieldTypeName)
-		depType, ok := a.nodeByName[depTypeName]
-		if !ok {
-			return nil, fmt.Errorf("entproto: failed extracting deps, unknown path for %s", fieldTypeName)
+		if isEnum && !strings.HasPrefix(typeName, ".") {
+			// The nested enum entproto generates for an ent enum field.
+			continue
+		}
+		depType := a.referencedSchema(selfPackageName, typeName, isEnum)
+		if depType == nil {
+			return nil, fmt.Errorf("entproto: field %q references unknown protobuf type %q; use the full name of a generated"+
+				" schema (such as %q), or entproto.MessageField/EnumField or RegisterCustomType/RegisterCustomEnum for external types",
+				fld.GetName(), strings.TrimPrefix(typeName, "."), selfPackageName+"."+m.GetName())
 		}
 		depPackageName, err := a.protoPackageName(depType)
 		if err != nil {
 			return nil, err
 		}
 		if depPackageName != selfPackageName {
-			importPath := relFileName(depPackageName)
-			out = append(out, *importPath)
+			out = append(out, *relFileName(depPackageName))
 		}
 	}
 	return out, nil
-}
-
-func protoTypeShortName(typeName string) string {
-	parts := strings.Split(typeName, ".")
-	return parts[len(parts)-1]
 }
 
 func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.DescriptorProto, error) {
@@ -426,19 +530,27 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 	// The default (non-user-defined) ID field is implicitly field number 1.
 	// Rather than mutating the caller's graph (genType.ID.Annotations), clone
 	// the ID field and annotate the clone so repeated LoadAdapter calls are
-	// side-effect free.
-	idField := genType.ID
-	if _, annotated := genType.ID.Annotations[FieldAnnotation]; !genType.ID.UserDefined && !annotated {
-		clone := *genType.ID
-		clone.Annotations = make(map[string]any, len(genType.ID.Annotations)+1)
-		maps.Copy(clone.Annotations, genType.ID.Annotations)
-		clone.Annotations[FieldAnnotation] = Field(IDFieldNumber)
-		idField = &clone
+	// side-effect free. Views and composite-ID edge schemas have no ID field.
+	var idField *gen.Field
+	if id := genType.ID; id != nil {
+		idField = id
+		if _, annotated := id.Annotations[FieldAnnotation]; !id.UserDefined && !annotated {
+			clone := *id
+			clone.Annotations = make(map[string]any, len(id.Annotations)+1)
+			maps.Copy(clone.Annotations, id.Annotations)
+			clone.Annotations[FieldAnnotation] = Field(IDFieldNumber)
+			idField = &clone
+		}
 	}
-
-	all := []*gen.Field{idField}
+	all := make([]*gen.Field, 0, len(genType.Fields)+1)
+	if idField != nil {
+		all = append(all, idField)
+	}
 	all = append(all, genType.Fields...)
 
+	// Nested enum values share the message's scope, so values of different
+	// enum fields may collide when OmitFieldPrefix drops the field prefix.
+	enumValueField := make(map[string]string)
 	for _, f := range all {
 		if _, ok := f.Annotations[SkipAnnotation]; ok {
 			continue
@@ -460,6 +572,13 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 			dp, err := toProtoEnumDescriptor(f)
 			if err != nil {
 				return nil, err
+			}
+			for _, v := range dp.Value {
+				if other, dup := enumValueField[v.GetName()]; dup {
+					return nil, fmt.Errorf("entproto: enum value %s of field %q collides with a value of field %q in message %q;"+
+						" remove entproto.OmitFieldPrefix from one of them", v.GetName(), f.Name, other, genType.Name)
+				}
+				enumValueField[v.GetName()] = f.Name
 			}
 			msg.EnumType = append(msg.EnumType, dp)
 		}
@@ -587,9 +706,9 @@ func toProtoFieldDescriptor(schemaName string, f *gen.Field, isID bool) (*descri
 				typeName = normalizeCustomTypeName(typeName)
 			}
 			fieldDesc.TypeName = &typeName
-			if fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && fann.ProtoFile != "" {
-				registerCustomTypeDetails(fann.TypeName, fann.ProtoFile, fann.ProtoPackage, fann.MessagePath)
-			}
+		}
+		if isJSONSlice(f) {
+			fieldDesc.Label = toPtr(descriptorpb.FieldDescriptorProto_LABEL_REPEATED)
 		}
 		return fieldDesc, nil
 	}
@@ -615,6 +734,12 @@ func toProtoFieldDescriptor(schemaName string, f *gen.Field, isID bool) (*descri
 	return fieldDesc, nil
 }
 
+// isJSONSlice reports whether f is a JSON field holding a Go slice, which maps
+// to a repeated protobuf field. []byte is a scalar bytes value instead.
+func isJSONSlice(f *gen.Field) bool {
+	return f.Type.Type == field.TypeJSON && strings.HasPrefix(f.Type.Ident, "[]") && f.Type.Ident != "[]byte"
+}
+
 func unsupportedFieldTypeError(f *gen.Field) error {
 	return fmt.Errorf("entproto: field %q has unsupported type %s (%s); set entproto.Type or entproto.MessageField, or annotate it with entproto.Skip()",
 		f.Name, f.Type.ConstName(), f.Type)
@@ -637,6 +762,17 @@ func checkFieldNumber(schema, kind, member string, n int, isID bool) (int32, err
 			kind, member, schema, n, reservedFieldNumberStart, reservedFieldNumberEnd)
 	}
 	return int32(n), nil
+}
+
+// fieldsWithID returns t's ID field, when it has a single-field ID, followed by
+// its other fields. Views and edge schemas with a composite ID have no ID
+// field.
+func fieldsWithID(t *gen.Type) []*gen.Field {
+	out := make([]*gen.Field, 0, len(t.Fields)+1)
+	if t.ID != nil {
+		out = append(out, t.ID)
+	}
+	return append(out, t.Fields...)
 }
 
 func toPtr[T any](t T) *T {

@@ -54,6 +54,10 @@ func verifyIDTypesAgainstSource(g *gen.Graph, schemaDir, entPackage string) erro
 		return nil
 	}
 	for _, node := range g.Nodes {
+		if node.ID == nil {
+			// Views and composite-ID edge schemas have no ID field.
+			continue
+		}
 		actual, ok := structIDType(entDir, node.Name)
 		if !ok {
 			// Generated source not available yet; trust the IDType option.

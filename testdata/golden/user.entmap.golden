@@ -57,10 +57,16 @@ func ToProtoUser(e *ent.User) (*entpb.User, error) {
 	v.Email = email
 	id := e.ID
 	v.Id = id
+	if e.Kind != nil {
+		kind := (*e.Kind)
+		v.Kind = new(kind)
+	}
 	name := e.Name
 	v.Name = name
 	nickname := string(e.Nickname)
 	v.Nickname = nickname
+	null_marker := e.NullMarker
+	v.NullMarker = null_marker
 	if e.OptionalBirthday != nil {
 		optional_birthday := (*e.OptionalBirthday).Unix()
 		v.OptionalBirthday = new(optional_birthday)
@@ -96,6 +102,8 @@ func ToProtoUser(e *ent.User) (*entpb.User, error) {
 	v.Status = status
 	tags := e.Tags
 	v.Tags = tags
+	timestamps := e.Timestamps
+	v.Timestamps = timestamps
 	return v, nil
 }
 
@@ -112,8 +120,12 @@ func ToEntUser(v *entpb.User) (*ent.User, error) {
 	e.Birthday = time.Unix(v.Birthday, 0)
 	e.Email = v.Email
 	e.ID = int64(v.Id)
+	if v.Kind != nil {
+		e.Kind = new(*v.Kind)
+	}
 	e.Name = v.Name
 	e.Nickname = model.Nickname(v.Nickname)
+	e.NullMarker = v.NullMarker
 	if v.OptionalBirthday != nil {
 		e.OptionalBirthday = new(time.Unix(*v.OptionalBirthday, 0))
 	}
@@ -136,5 +148,6 @@ func ToEntUser(v *entpb.User) (*ent.User, error) {
 	e.Score = float64(v.Score)
 	e.Status = v.Status
 	e.Tags = v.Tags
+	e.Timestamps = v.Timestamps
 	return e, nil
 }
