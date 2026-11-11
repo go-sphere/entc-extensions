@@ -50,10 +50,10 @@ func (*InvalidAnnotationError) Is(target error) bool {
 	return target == ErrInvalidAnnotation
 }
 
-// FieldNumberOverflowError reports an edge whose [Field] number does not fit in
-// int32. It is the conversion error of the referencing schema (see
-// [Adapter.GetFileDescriptor]) and matches [ErrFieldNumberOverflow] with
-// errors.Is.
+// FieldNumberOverflowError reports a field or edge whose [Field] number does
+// not fit in int32; Field holds the field or edge name. It is the conversion
+// error of the schema (see [Adapter.GetFileDescriptor]) and matches
+// [ErrFieldNumberOverflow] with errors.Is.
 type FieldNumberOverflowError struct {
 	Schema string
 	Field  string

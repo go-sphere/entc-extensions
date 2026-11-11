@@ -2,7 +2,6 @@ package entproto
 
 import (
 	"fmt"
-	"strings"
 
 	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema"
@@ -19,20 +18,22 @@ const FieldAnnotation = "ProtoField"
 type FieldOption func(*pbfield)
 
 // Field annotates an ent field or edge with its protobuf field number num.
-// Numbers must be unique within the message and must fit in int32; number 1 is
-// reserved for the ID field and is rejected on other fields and edges. The
+// Numbers must be unique within the message and lie in the protobuf range
+// 1-536870911 outside 19000-19999; number 1 is reserved for the ID field and
+// is rejected on other fields and edges. The
 // default ent ID gets number 1 implicitly; an id field declared in the schema's
 // Fields needs Field(1) (or [WithAutoFill]).
 //
 // Without options, the protobuf type follows the ent type: bool, string, and
 // numeric types map to the matching scalar (int, int64 -> int64; int8-int32 ->
-// int32; uint, uint8-uint32 -> uint32; uint64 -> uint64; float32 -> float;
+// int32; uint8-uint32 -> uint32; uint, uint64 -> uint64; float32 -> float;
 // float64 -> double), time.Time -> int64, UUID and bytes -> bytes, enum -> a
 // nested enum configured by [Enum], and JSON []string, []int32, []int64,
 // []uint32, or []uint64 -> the matching repeated scalar. Other JSON and Other
 // fields fail unless [Type] or [MessageField] supplies the type. Nillable
-// fields that are neither repeated nor messages become proto3 optional fields. An edge becomes a
-// message reference to the target schema, repeated unless the edge is unique.
+// fields that are neither repeated nor messages become proto3 optional fields.
+// An edge becomes a message reference to the target schema, repeated unless
+// the edge is unique.
 func Field(num int, options ...FieldOption) schema.Annotation {
 	f := pbfield{Number: num}
 	for _, apply := range options {
@@ -47,11 +48,9 @@ type pbfield struct {
 	TypeName     string
 	ProtoPackage string
 	MessagePath  string
-	// ProtoFile, when set, names the .proto file that defines TypeName for an
-	// externally-defined message. It is filled in by MessageField so the
-	// adapter can pick up the import without requiring a separate
-	// RegisterCustomType call. It serialises along with the rest of the
-	// annotation via mapstructure.
+	// ProtoFile, ProtoPackage and MessagePath describe the externally-defined
+	// message named by TypeName. MessageField fills them in so the adapter can
+	// add the import without a separate RegisterCustomType call.
 	ProtoFile string
 }
 
@@ -102,55 +101,34 @@ func TypeName(n string) FieldOption {
 // The generator will emit `import "shared/v1/user.proto";` and reference the
 // field as `shared.v1.User user = 3;`.
 func MessageField(num int, msg proto.Message) schema.Annotation {
-	if msg == nil {
-		panic("entproto: MessageField called with nil message")
-	}
-	d := msg.ProtoReflect().Descriptor()
-	if d == nil {
-		panic(fmt.Sprintf("entproto: MessageField(%T) returned nil descriptor", msg))
-	}
-	parent := d.ParentFile()
-	if parent == nil {
-		panic(fmt.Sprintf("entproto: MessageField(%T) descriptor has no parent file", msg))
-	}
+	entry := describeMessage("MessageField", msg)
 	return pbfield{
 		Number:       num,
 		Type:         descriptorpb.FieldDescriptorProto_TYPE_MESSAGE,
-		TypeName:     string(d.FullName()),
-		ProtoFile:    parent.Path(),
-		ProtoPackage: string(parent.Package()),
-		MessagePath:  strings.TrimPrefix(string(d.FullName()), string(parent.Package())+"."),
+		TypeName:     entry.FullName,
+		ProtoFile:    entry.ProtoFile,
+		ProtoPackage: entry.ProtoPackage,
+		MessagePath:  entry.MessagePath,
 	}
 }
 
 func extractFieldAnnotation(fld *gen.Field) (*pbfield, error) {
-	annot, ok := fld.Annotations[FieldAnnotation]
-	if !ok {
-		return nil, fmt.Errorf("entproto: field %q does not have an entproto.Field annnoation", fld.Name)
-	}
-
-	var out pbfield
-	err := mapstructure.Decode(annot, &out)
-	if err != nil {
-		return nil, fmt.Errorf("entproto: unable to decode entproto.Field annotation for field %q: %w",
-			fld.Name, err)
-	}
-
-	return &out, nil
+	return decodeFieldAnnotation(fld.Annotations, "field", fld.Name)
 }
 
 func extractEdgeAnnotation(edge *gen.Edge) (*pbfield, error) {
-	annot, ok := edge.Annotations[FieldAnnotation]
+	return decodeFieldAnnotation(edge.Annotations, "edge", edge.Name)
+}
+
+func decodeFieldAnnotation(annotations map[string]any, kind, name string) (*pbfield, error) {
+	annot, ok := annotations[FieldAnnotation]
 	if !ok {
-		return nil, fmt.Errorf("entproto: edge %q does not have an entproto.Field annotation", edge.Name)
+		return nil, fmt.Errorf("entproto: %s %q does not have an entproto.Field annotation", kind, name)
 	}
 
 	var out pbfield
-	err := mapstructure.Decode(annot, &out)
-	if err != nil {
-		return nil, fmt.Errorf("entproto: unable to decode entproto.Field annotation for field %q: %w",
-			edge.Name, err)
+	if err := mapstructure.Decode(annot, &out); err != nil {
+		return nil, fmt.Errorf("entproto: unable to decode entproto.Field annotation for %s %q: %w", kind, name, err)
 	}
-
 	return &out, nil
 }

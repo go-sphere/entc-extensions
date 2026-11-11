@@ -2,7 +2,8 @@ package entproto
 
 import (
 	"fmt"
-	"sort"
+	"slices"
+	"strings"
 
 	"entgo.io/ent/entc/gen"
 	"github.com/jhump/protoreflect/desc" //nolint:staticcheck // Adapter APIs still expose jhump v1 descriptors.
@@ -14,9 +15,9 @@ import (
 // errors as [Adapter.GetMessageDescriptor], or an error if schemaName is not in
 // the graph.
 func (a *Adapter) FieldMap(schemaName string) (FieldMap, error) {
-	bt, err := extractGenTypeByName(a.graph, schemaName)
-	if err != nil {
-		return nil, err
+	bt, ok := a.nodeByName[schemaName]
+	if !ok {
+		return nil, fmt.Errorf("entproto: could not find schema %q in graph", schemaName)
 	}
 	md, err := a.GetMessageDescriptor(schemaName)
 	if err != nil {
@@ -32,16 +33,7 @@ type FieldMap map[string]*FieldMappingDescriptor
 // Fields returns the descriptors of all non-edge fields, including the ID,
 // sorted by [FieldMappingDescriptor.PbStructField].
 func (m FieldMap) Fields() []*FieldMappingDescriptor {
-	var out []*FieldMappingDescriptor
-	for _, f := range m {
-		if !f.IsEdgeField {
-			out = append(out, f)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PbStructField() < out[j].PbStructField()
-	})
-	return out
+	return m.sorted(func(f *FieldMappingDescriptor) bool { return !f.IsEdgeField })
 }
 
 // ID returns the descriptor of the ID field, or nil if the message has none
@@ -58,30 +50,24 @@ func (m FieldMap) ID() *FieldMappingDescriptor {
 // Edges returns the descriptors of all edge fields, sorted by
 // [FieldMappingDescriptor.PbStructField].
 func (m FieldMap) Edges() []*FieldMappingDescriptor {
-	var out []*FieldMappingDescriptor
-	for _, f := range m {
-		if f.IsEdgeField {
-			out = append(out, f)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PbStructField() < out[j].PbStructField()
-	})
-
-	return out
+	return m.sorted(func(f *FieldMappingDescriptor) bool { return f.IsEdgeField })
 }
 
 // Enums returns the descriptors of all enum-typed fields, sorted by
 // [FieldMappingDescriptor.PbStructField].
 func (m FieldMap) Enums() []*FieldMappingDescriptor {
+	return m.sorted(func(f *FieldMappingDescriptor) bool { return f.IsEnumField })
+}
+
+func (m FieldMap) sorted(keep func(*FieldMappingDescriptor) bool) []*FieldMappingDescriptor {
 	var out []*FieldMappingDescriptor
 	for _, f := range m {
-		if f.IsEnumField {
+		if keep(f) {
 			out = append(out, f)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PbStructField() < out[j].PbStructField()
+	slices.SortFunc(out, func(a, b *FieldMappingDescriptor) int {
+		return strings.Compare(a.PbStructField(), b.PbStructField())
 	})
 	return out
 }
@@ -109,7 +95,7 @@ func (d *FieldMappingDescriptor) PbStructField() string {
 // PbFieldName returns the same Go struct field name as
 // [FieldMappingDescriptor.PbStructField].
 func (d *FieldMappingDescriptor) PbFieldName() string {
-	return camelCase(d.PbFieldDescriptor.GetName())
+	return d.PbStructField()
 }
 
 // IsProto3Optional reports whether the protobuf field is a proto3 optional
@@ -165,8 +151,7 @@ func (d *FieldMappingDescriptor) EdgeIDPbStructField() string {
 // field of the message this edge refers to, or nil if that message has no
 // such field. It panics if the descriptor is not an edge.
 func (d *FieldMappingDescriptor) EdgeIDPbStructFieldDesc() *desc.FieldDescriptor {
-	field := camelCase(d.EntEdge.Type.ID.Name)
-	return d.ReferencedPbType.FindFieldByName(snake(field))
+	return d.ReferencedPbType.FindFieldByName(d.EntEdge.Type.ID.Name)
 }
 
 func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (FieldMap, error) {
@@ -180,11 +165,11 @@ func (a *Adapter) mapFields(entType *gen.Type, pbType *desc.MessageDescriptor) (
 		edgeByName[edg.Name] = edg
 	}
 
-	m := make(map[string]*FieldMappingDescriptor)
+	m := make(map[string]*FieldMappingDescriptor, len(pbType.GetFields()))
 	for _, fld := range pbType.GetFields() {
 		fd := &FieldMappingDescriptor{
 			PbFieldDescriptor: fld,
-			IsIDField:         pascal(fld.GetName()) == pascal(entType.ID.Name),
+			IsIDField:         fld.GetName() == entType.ID.Name,
 			IsEnumField:       fld.GetEnumType() != nil,
 		}
 		edg, isEdge := edgeByName[fld.GetName()]

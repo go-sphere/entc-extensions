@@ -30,9 +30,18 @@ var typeMap = map[field.Type]typeConfig{
 	field.TypeFloat64: {pbType: descriptorpb.FieldDescriptorProto_TYPE_DOUBLE},
 }
 
+// repeatedJSONTypes maps the Go type of a JSON field to the element type of
+// the repeated protobuf field it becomes.
+var repeatedJSONTypes = map[string]descriptorpb.FieldDescriptorProto_Type{
+	"[]string": descriptorpb.FieldDescriptorProto_TYPE_STRING,
+	"[]int32":  descriptorpb.FieldDescriptorProto_TYPE_INT32,
+	"[]int64":  descriptorpb.FieldDescriptorProto_TYPE_INT64,
+	"[]uint32": descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+	"[]uint64": descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+}
+
 type typeConfig struct {
 	unsupported bool
 	pbType      descriptorpb.FieldDescriptorProto_Type
-	msgTypeName string
 	namer       func(fld *gen.Field) string
 }

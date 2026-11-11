@@ -2,7 +2,10 @@ package entproto
 
 import (
 	"errors"
+	"math"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"entgo.io/ent/entc"
@@ -277,5 +280,188 @@ func TestLinkDependencyError_MessageFieldReference(t *testing.T) {
 	}
 	if dangling.Schema != "A" || dangling.Field != "bref" || dangling.RefSchema != "B" {
 		t.Fatalf("dangling = %+v, want A.bref -> B", dangling)
+	}
+}
+
+func testType(name string, msg any, fields []*gen.Field, edges []*gen.Edge) *gen.Type {
+	return &gen.Type{
+		Name:        name,
+		ID:          &gen.Field{Name: "id", Type: &field.TypeInfo{Type: field.TypeInt64}},
+		Fields:      fields,
+		Edges:       edges,
+		Annotations: map[string]any{MessageAnnotation: msg},
+	}
+}
+
+func loadTestAdapter(t *testing.T, nodes ...*gen.Type) *Adapter {
+	t.Helper()
+	a, err := LoadAdapter(&gen.Graph{Nodes: nodes, Config: &gen.Config{Package: "example.com/app/ent"}})
+	if err != nil {
+		t.Fatalf("LoadAdapter failed: %v", err)
+	}
+	return a
+}
+
+// ent's pascal rewrites acronyms (Api -> API), so edge targets must be looked
+// up by their schema name as-is.
+func TestLoadAdapter_EdgeToAcronymNamedSchema(t *testing.T) {
+	api := testType("Api", Message(), nil, nil)
+	src := testType("Src", Message(), nil, []*gen.Edge{{
+		Name: "api", Type: api, Unique: true,
+		Annotations: map[string]any{FieldAnnotation: Field(2)},
+	}})
+	a := loadTestAdapter(t, api, src)
+	md, err := a.GetMessageDescriptor("Src")
+	if err != nil {
+		t.Fatalf("GetMessageDescriptor(Src) failed: %v", err)
+	}
+	if got := md.FindFieldByName("api").GetMessageType().GetFullyQualifiedName(); got != "entpb.Api" {
+		t.Fatalf("api edge type = %q, want entpb.Api", got)
+	}
+}
+
+func TestLoadAdapter_SkippedEdgeToSkipGenSchema(t *testing.T) {
+	hidden := testType("Hidden", SkipGen(), nil, nil)
+	src := testType("Src", Message(), nil, []*gen.Edge{{
+		Name: "hidden", Type: hidden,
+		Annotations: map[string]any{SkipAnnotation: Skip()},
+	}})
+	a := loadTestAdapter(t, hidden, src)
+	if _, err := a.GetMessageDescriptor("Src"); err != nil {
+		t.Fatalf("GetMessageDescriptor(Src) failed: %v", err)
+	}
+	if _, err := a.GetMessageDescriptor("Hidden"); !errors.Is(err, ErrSchemaSkipped) {
+		t.Fatalf("GetMessageDescriptor(Hidden) error = %v, want ErrSchemaSkipped", err)
+	}
+}
+
+func TestLoadAdapter_UnskippedEdgeToSkipGenSchemaFails(t *testing.T) {
+	hidden := testType("Hidden", SkipGen(), nil, nil)
+	src := testType("Src", Message(), nil, []*gen.Edge{{
+		Name: "hidden", Type: hidden,
+		Annotations: map[string]any{FieldAnnotation: Field(2)},
+	}})
+	a := loadTestAdapter(t, hidden, src)
+	_, err := a.GetMessageDescriptor("Src")
+	if err == nil || !strings.Contains(err.Error(), "entproto.Skip()") {
+		t.Fatalf("GetMessageDescriptor(Src) error = %v, want a hint to annotate the edge with entproto.Skip()", err)
+	}
+}
+
+func TestLoadAdapter_EmptyPackageNameSharesDefaultPackage(t *testing.T) {
+	u := testType("U", Message(PackageName("")), nil, nil)
+	src := testType("Src", Message(), nil, []*gen.Edge{{
+		Name: "u", Type: u, Unique: true,
+		Annotations: map[string]any{FieldAnnotation: Field(2)},
+	}})
+	a := loadTestAdapter(t, u, src)
+	md, err := a.GetMessageDescriptor("Src")
+	if err != nil {
+		t.Fatalf("GetMessageDescriptor(Src) failed: %v", err)
+	}
+	if got := md.FindFieldByName("u").GetMessageType().GetFullyQualifiedName(); got != "entpb.U" {
+		t.Fatalf("u edge type = %q, want entpb.U", got)
+	}
+}
+
+func TestLoadAdapter_InvalidFieldNumbersArePerSchemaErrors(t *testing.T) {
+	tests := []struct {
+		number int
+		want   string
+	}{
+		{number: 0, want: "outside the protobuf range"},
+		{number: -3, want: "outside the protobuf range"},
+		{number: 19500, want: "reserved by protobuf"},
+		{number: maxFieldNumber + 1, want: "outside the protobuf range"},
+	}
+	for _, tc := range tests {
+		bad := testType("Bad", Message(), []*gen.Field{{
+			Name: "f", Type: &field.TypeInfo{Type: field.TypeString},
+			Annotations: map[string]any{FieldAnnotation: Field(tc.number)},
+		}}, nil)
+		good := testType("Good", Message(), nil, nil)
+		a := loadTestAdapter(t, bad, good)
+		if _, err := a.GetMessageDescriptor("Good"); err != nil {
+			t.Fatalf("number %d: GetMessageDescriptor(Good) failed: %v", tc.number, err)
+		}
+		_, err := a.GetMessageDescriptor("Bad")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("number %d: error = %v, want it to contain %q", tc.number, err, tc.want)
+		}
+	}
+}
+
+func TestLoadAdapter_FieldNumberOverflowIsTyped(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("int cannot exceed int32 on this platform")
+	}
+	bad := testType("Bad", Message(), []*gen.Field{{
+		Name: "f", Type: &field.TypeInfo{Type: field.TypeString},
+		Annotations: map[string]any{FieldAnnotation: Field(math.MaxInt32 + 1)},
+	}}, nil)
+	_, err := loadTestAdapter(t, bad).GetMessageDescriptor("Bad")
+	var overflow *FieldNumberOverflowError
+	if !errors.As(err, &overflow) || overflow.Schema != "Bad" || overflow.Field != "f" {
+		t.Fatalf("error = %v, want *FieldNumberOverflowError for Bad.f", err)
+	}
+}
+
+func TestLoadAdapter_TypeOverrideRequiresTypeName(t *testing.T) {
+	bad := testType("Bad", Message(), []*gen.Field{{
+		Name: "f", Type: &field.TypeInfo{Type: field.TypeString},
+		Annotations: map[string]any{FieldAnnotation: Field(2, Type(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE))},
+	}}, nil)
+	_, err := loadTestAdapter(t, bad).GetMessageDescriptor("Bad")
+	if err == nil || !strings.Contains(err.Error(), "without entproto.TypeName") {
+		t.Fatalf("error = %v, want missing TypeName error", err)
+	}
+}
+
+func TestLoadAdapter_MalformedMessageAnnotationIsAnError(t *testing.T) {
+	bad := testType("Bad", map[string]any{"Generate": "yes"}, nil, nil)
+	_, err := loadTestAdapter(t, bad).GetMessageDescriptor("Bad")
+	if err == nil || errors.Is(err, ErrSchemaSkipped) {
+		t.Fatalf("error = %v, want a decode error rather than ErrSchemaSkipped", err)
+	}
+}
+
+func TestLoadAdapter_UnsupportedFieldTypeNamesField(t *testing.T) {
+	bad := testType("Bad", Message(), []*gen.Field{{
+		Name: "blob", Type: &field.TypeInfo{Type: field.TypeJSON, Ident: "map[string]any"},
+		Annotations: map[string]any{FieldAnnotation: Field(2)},
+	}}, nil)
+	_, err := loadTestAdapter(t, bad).GetMessageDescriptor("Bad")
+	if err == nil || !strings.Contains(err.Error(), `"blob"`) {
+		t.Fatalf("error = %v, want it to name the field", err)
+	}
+}
+
+func TestLoadAdapter_EnumValueCollidingWithUnspecified(t *testing.T) {
+	bad := testType("Bad", Message(), []*gen.Field{{
+		Name:  "status",
+		Type:  &field.TypeInfo{Type: field.TypeEnum},
+		Enums: []gen.Enum{{Name: "Unspecified", Value: "unspecified"}, {Name: "On", Value: "on"}},
+		Annotations: map[string]any{
+			FieldAnnotation: Field(2),
+			EnumAnnotation:  Enum(map[string]int32{"unspecified": 1, "on": 2}),
+		},
+	}}, nil)
+	good := testType("Good", Message(), nil, nil)
+	a := loadTestAdapter(t, bad, good)
+	_, err := a.GetMessageDescriptor("Bad")
+	if err == nil || !strings.Contains(err.Error(), "STATUS_UNSPECIFIED") {
+		t.Fatalf("error = %v, want a STATUS_UNSPECIFIED collision", err)
+	}
+}
+
+func TestEnumVerify_CountMismatchWrapsSentinel(t *testing.T) {
+	fld := &gen.Field{
+		Name:  "status",
+		Type:  &field.TypeInfo{Type: field.TypeEnum},
+		Enums: []gen.Enum{{Name: "On", Value: "on"}, {Name: "Off", Value: "off"}},
+	}
+	err := Enum(map[string]int32{"on": 1}).Verify(fld)
+	if err == nil || !errors.Is(err, ErrEnumFieldsNotAnnotated) || !strings.Contains(err.Error(), `"status"`) {
+		t.Fatalf("error = %v, want ErrEnumFieldsNotAnnotated naming the field", err)
 	}
 }

@@ -3,6 +3,7 @@ package entproto
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -10,9 +11,7 @@ import (
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
-	"github.com/jhump/protoreflect/desc"            //nolint:staticcheck
 	"github.com/jhump/protoreflect/desc/protoprint" //nolint:staticcheck
-	"go.uber.org/multierr"
 )
 
 // ExtensionOption configures an [Extension] created by [NewExtension].
@@ -41,8 +40,9 @@ func NewExtension(opts ...ExtensionOption) (*Extension, error) {
 // before any .proto file. It then, in order: applies [FixGraph] when
 // [WithAutoFill] is set, builds descriptors with [LoadAdapter], and writes one
 // .proto file per protobuf package, overwriting existing files. Schemas without
-// a [Message] annotation (or with [SkipGen]) are omitted and, unless AutoFill
-// is enabled, listed in a warning on standard error. Any schema that fails to
+// a [Message] annotation (or with [SkipGen]) are omitted; unless AutoFill is
+// enabled, those without any Message annotation are listed in a warning on
+// standard error. Any schema that fails to
 // convert aborts generation with an error prefixed "entproto:"; files written
 // by ent itself are not rolled back.
 //
@@ -150,34 +150,28 @@ func (e *Extension) generate(g *gen.Graph) error {
 	if err != nil {
 		return fmt.Errorf("entproto: failed parsing ent graph: %w", err)
 	}
-	var errs error
-	var skipped []string
-	for _, schema := range g.Schemas {
-		name := schema.Name
-		_, err := adapter.GetFileDescriptor(name)
-		if err != nil && !errors.Is(err, ErrSchemaSkipped) {
-			errs = multierr.Append(errs, err)
-			continue
+	var errs []error
+	var unannotated []string
+	for _, node := range g.Nodes {
+		_, err := adapter.GetFileDescriptor(node.Name)
+		switch {
+		case err == nil:
+		case !errors.Is(err, ErrSchemaSkipped):
+			errs = append(errs, fmt.Errorf("schema %s: %w", node.Name, err))
+		case !e.autoFill && node.Annotations[MessageAnnotation] == nil:
+			// Without AutoFill a schema lacking an entproto.Message annotation
+			// is silently absent from every .proto file; warn so a forgotten
+			// annotation does not go unnoticed. SkipGen is deliberate.
+			unannotated = append(unannotated, node.Name)
 		}
-		if err != nil && errors.Is(err, ErrSchemaSkipped) && !e.autoFill {
-			// With AutoFill disabled a schema without an entproto.Message
-			// annotation is silently absent from every .proto file. Warn so a
-			// forgotten annotation does not go unnoticed.
-			skipped = append(skipped, name)
-		}
 	}
-	if errs != nil {
-		return fmt.Errorf("entproto: failed parsing some schemas: %w", errs)
+	if len(errs) > 0 {
+		return fmt.Errorf("entproto: failed parsing some schemas: %w", errors.Join(errs...))
 	}
-	if len(skipped) > 0 {
-		fmt.Fprintln(os.Stderr, skippedSchemasWarning(skipped))
+	if len(unannotated) > 0 {
+		fmt.Fprintln(os.Stderr, skippedSchemasWarning(unannotated))
 	}
-	generated := adapter.GeneratedFileDescriptors()
-	allDescriptors := make([]*desc.FileDescriptor, 0, len(generated))
-	for _, filedesc := range generated {
-		allDescriptors = append(allDescriptors, filedesc)
-	}
-	// Print the .proto files.
+	allDescriptors := slices.Collect(maps.Values(adapter.GeneratedFileDescriptors()))
 	var printer protoprint.Printer
 	if err = printer.PrintProtosToFileSystem(allDescriptors, entProtoDir); err != nil {
 		return fmt.Errorf("entproto: failed writing .proto files: %w", err)
@@ -192,5 +186,5 @@ func (e *Extension) generate(g *gen.Graph) error {
 func skippedSchemasWarning(skipped []string) string {
 	slices.Sort(skipped)
 	return "entproto: warning: schema(s) " + strings.Join(skipped, ", ") +
-		" have no entproto.Message(Generate=true) annotation and will not appear in any generated .proto file"
+		" have no entproto.Message annotation and will not appear in any generated .proto file"
 }

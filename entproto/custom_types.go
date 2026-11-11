@@ -58,40 +58,39 @@ var (
 // same type name is already registered with a different file or package;
 // calling it again with the same type is a no-op.
 func RegisterCustomType(msg proto.Message) {
+	entry := describeMessage("RegisterCustomType", msg)
+	registerCustomTypeDetails(entry.FullName, entry.ProtoFile, entry.ProtoPackage, entry.MessagePath)
+}
+
+// messageInfo locates a generated protobuf message within its .proto file.
+type messageInfo struct {
+	FullName     string
+	ProtoFile    string
+	ProtoPackage string
+	MessagePath  string // message name relative to ProtoPackage, e.g. "Outer.Inner"
+}
+
+// describeMessage reads msg's descriptor. caller names the exported function
+// in panic messages.
+func describeMessage(caller string, msg proto.Message) messageInfo {
 	if msg == nil {
-		panic("entproto: RegisterCustomType called with nil message")
+		panic("entproto: " + caller + " called with nil message")
 	}
 	d := msg.ProtoReflect().Descriptor()
 	if d == nil {
-		panic(fmt.Sprintf("entproto: RegisterCustomType(%T) returned nil descriptor", msg))
+		panic(fmt.Sprintf("entproto: %s(%T) returned nil descriptor", caller, msg))
 	}
 	parent := d.ParentFile()
 	if parent == nil {
-		panic(fmt.Sprintf("entproto: RegisterCustomType(%T) descriptor has no parent file", msg))
+		panic(fmt.Sprintf("entproto: %s(%T) descriptor has no parent file", caller, msg))
 	}
-	registerCustomTypeDetails(
-		string(d.FullName()),
-		parent.Path(),
-		string(parent.Package()),
-		strings.TrimPrefix(string(d.FullName()), string(parent.Package())+"."),
-	)
-}
-
-// registerCustomType is the low-level primitive used by RegisterCustomType and
-// the test helpers. It performs validation and idempotency checks.
-func registerCustomType(protoTypeName, protoFilePath string) {
-	name := strings.TrimPrefix(protoTypeName, ".")
-	if name == "" {
-		panic("entproto: registerCustomType called with empty type name")
+	fullName := string(d.FullName())
+	return messageInfo{
+		FullName:     fullName,
+		ProtoFile:    parent.Path(),
+		ProtoPackage: string(parent.Package()),
+		MessagePath:  strings.TrimPrefix(fullName, string(parent.Package())+"."),
 	}
-	if protoFilePath == "" {
-		panic(fmt.Sprintf("entproto: registerCustomType(%q) called with empty proto file path", protoTypeName))
-	}
-	idx := strings.LastIndex(name, ".")
-	if idx <= 0 || idx == len(name)-1 {
-		panic(fmt.Sprintf("entproto: registerCustomType expects a fully-qualified name like \"pkg.Sub.Message\", got %q", protoTypeName))
-	}
-	registerCustomTypeDetails(protoTypeName, protoFilePath, name[:idx], name[idx+1:])
 }
 
 func registerCustomTypeDetails(protoTypeName, protoFilePath, protoPackage, messagePath string) {
@@ -136,10 +135,11 @@ func resetCustomTypeRegistry() {
 	customTypeRegistry = map[string]customTypeEntry{}
 }
 
-// buildCustomTypeStubFile synthesises a minimal FileDescriptorProto that
-// declares the registered message inside its proto package. It is fed into
-// desc.CreateFileDescriptors so cross-file references can link, but it is
-// filtered out before printing so we never overwrite the user's real file.
+// addCustomTypeToStub declares the registered message in the stub
+// FileDescriptorProto for its proto file, creating the stub if needed. Stubs
+// are fed into desc.CreateFileDescriptors so cross-file references can link,
+// but are filtered out before printing so the user's real file is never
+// overwritten.
 func addCustomTypeToStub(files map[string]*descriptorpb.FileDescriptorProto, entry customTypeEntry) error {
 	stub, ok := files[entry.ProtoFile]
 	if !ok {

@@ -59,15 +59,15 @@ func fixNode(node *gen.Type) error {
 	}
 
 	// Add annotation for other fields
-	for j := range node.Fields {
-		if err := addAnnotationForField(node.Fields[j], idGenerator, "field"); err != nil {
+	for _, fd := range node.Fields {
+		if err := addAnnotationForField(fd, idGenerator); err != nil {
 			return err
 		}
 	}
 
 	// Add annotation for edges
-	for j := range node.Edges {
-		if err := addAnnotationForEdge(node.Edges[j], idGenerator); err != nil {
+	for _, ed := range node.Edges {
+		if err := addAnnotationForEdge(ed, idGenerator); err != nil {
 			return err
 		}
 	}
@@ -78,10 +78,7 @@ func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) error {
 	if ed.Annotations == nil {
 		ed.Annotations = make(map[string]any, 1)
 	}
-	if ed.Annotations[FieldAnnotation] != nil {
-		return nil
-	}
-	if ed.Annotations[SkipAnnotation] != nil {
+	if ed.Annotations[FieldAnnotation] != nil || ed.Annotations[SkipAnnotation] != nil {
 		return nil
 	}
 	num, err := idGenerator.Next("edge", ed.Name)
@@ -96,10 +93,7 @@ func addAnnotationForID(fd *gen.Field, idGenerator *fieldIDGenerator) error {
 	if fd.Annotations == nil {
 		fd.Annotations = make(map[string]any, 1)
 	}
-	if fd.Annotations[FieldAnnotation] != nil {
-		return nil
-	}
-	if fd.Annotations[SkipAnnotation] != nil {
+	if fd.Annotations[FieldAnnotation] != nil || fd.Annotations[SkipAnnotation] != nil {
 		return nil
 	}
 
@@ -111,7 +105,7 @@ func addAnnotationForID(fd *gen.Field, idGenerator *fieldIDGenerator) error {
 	return nil
 }
 
-func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator, kind string) error {
+func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator) error {
 	if fd.Annotations == nil {
 		fd.Annotations = make(map[string]any, 1)
 	}
@@ -119,7 +113,7 @@ func addAnnotationForField(fd *gen.Field, idGenerator *fieldIDGenerator, kind st
 		return nil
 	}
 
-	num, err := idGenerator.Next(kind, fd.Name)
+	num, err := idGenerator.Next("field", fd.Name)
 	if err != nil {
 		return err
 	}
@@ -148,56 +142,46 @@ func stableFieldNumber(schema, kind, field string) int {
 	h := fnv.New32a()
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s", schema, kind, field)
 	// Map into protobuf's valid user range while keeping 1 reserved for the ID.
-	num := int(h.Sum32()%uint32(536870911-1)) + 2
-	if num >= 19000 && num <= 19999 {
-		num += 1000
+	num := int(h.Sum32()%uint32(maxFieldNumber-1)) + 2
+	if num >= reservedFieldNumberStart && num <= reservedFieldNumberEnd {
+		num += reservedFieldNumberEnd - reservedFieldNumberStart + 1
 	}
 	return num
 }
 
 func extractExistFieldID(node *gen.Type) (map[int]struct{}, error) {
 	existNums := map[int]struct{}{}
-	fields := make([]*gen.Field, 0, len(node.Fields)+1)
-	fields = append(fields, node.ID)
-	fields = append(fields, node.Fields...)
-	for _, fd := range fields {
-		if fd.Annotations != nil {
-			if obj, exist := fd.Annotations[FieldAnnotation]; exist {
-				pbField := struct {
-					Number int
-				}{}
-				err := mapstructure.Decode(obj, &pbField)
-				if err != nil {
-					return nil, &InvalidAnnotationError{
-						Schema:     node.Name,
-						Field:      fd.Name,
-						Annotation: FieldAnnotation,
-						Cause:      err,
-					}
-				}
-				existNums[pbField.Number] = struct{}{}
-			}
+	for _, fd := range append([]*gen.Field{node.ID}, node.Fields...) {
+		num, ok, err := annotatedFieldNumber(fd.Annotations)
+		if err != nil {
+			return nil, &InvalidAnnotationError{Schema: node.Name, Field: fd.Name, Annotation: FieldAnnotation, Cause: err}
+		}
+		if ok {
+			existNums[num] = struct{}{}
 		}
 	}
-	// Also check edges
 	for _, ed := range node.Edges {
-		if ed.Annotations != nil {
-			if obj, exist := ed.Annotations[FieldAnnotation]; exist {
-				pbField := struct {
-					Number int
-				}{}
-				err := mapstructure.Decode(obj, &pbField)
-				if err != nil {
-					return nil, &InvalidAnnotationError{
-						Schema:     node.Name,
-						Edge:       ed.Name,
-						Annotation: FieldAnnotation,
-						Cause:      err,
-					}
-				}
-				existNums[pbField.Number] = struct{}{}
-			}
+		num, ok, err := annotatedFieldNumber(ed.Annotations)
+		if err != nil {
+			return nil, &InvalidAnnotationError{Schema: node.Name, Edge: ed.Name, Annotation: FieldAnnotation, Cause: err}
+		}
+		if ok {
+			existNums[num] = struct{}{}
 		}
 	}
 	return existNums, nil
+}
+
+// annotatedFieldNumber returns the number of the Field annotation in
+// annotations; ok is false when there is none.
+func annotatedFieldNumber(annotations map[string]any) (num int, ok bool, err error) {
+	obj, exist := annotations[FieldAnnotation]
+	if !exist {
+		return 0, false, nil
+	}
+	var pbField struct{ Number int }
+	if err := mapstructure.Decode(obj, &pbField); err != nil {
+		return 0, false, err
+	}
+	return pbField.Number, true, nil
 }

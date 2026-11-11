@@ -6,7 +6,6 @@ require (
 	entgo.io/ent v0.14.6
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/jhump/protoreflect v1.18.1
-	go.uber.org/multierr v1.11.0
 	google.golang.org/protobuf v1.36.12
 )
 

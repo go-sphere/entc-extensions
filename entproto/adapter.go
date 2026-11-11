@@ -3,6 +3,7 @@ package entproto
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"path"
 	"path/filepath"
@@ -22,15 +23,16 @@ const (
 	DefaultProtoPackageName = "entpb"
 	// IDFieldNumber is the protobuf field number reserved for the ID field.
 	IDFieldNumber = 1
+
+	maxFieldNumber           = 1<<29 - 1
+	reservedFieldNumberStart = 19000
+	reservedFieldNumberEnd   = 19999
 )
 
-var (
-	// ErrSchemaSkipped is returned by [Adapter.GetFileDescriptor] and
-	// [Adapter.GetMessageDescriptor] for a schema that has no [Message]
-	// annotation or is annotated with [SkipGen].
-	ErrSchemaSkipped   = errors.New("entproto: schema not annotated with Generate=true")
-	repeatedFieldLabel = descriptorpb.FieldDescriptorProto_LABEL_REPEATED
-)
+// ErrSchemaSkipped is returned by [Adapter.GetFileDescriptor] and
+// [Adapter.GetMessageDescriptor] for a schema that has no [Message]
+// annotation or is annotated with [SkipGen].
+var ErrSchemaSkipped = errors.New("entproto: schema not annotated with Generate=true")
 
 // LoadAdapter converts every schema in graph into protobuf descriptors without
 // writing files. It reads annotations as they are; call [FixGraph] first to get
@@ -117,7 +119,7 @@ func (a *Adapter) GetMessageDescriptor(schemaName string) (*desc.MessageDescript
 	if findMessage != nil {
 		return findMessage, nil
 	}
-	return nil, errors.New("entproto: couldnt find message descriptor")
+	return nil, fmt.Errorf("entproto: could not find message descriptor for schema %s", schemaName)
 }
 
 // parse transforms the ent gen.Type objects into file descriptors
@@ -125,7 +127,6 @@ func (a *Adapter) parse() error {
 	var dpbDescriptors []*descriptorpb.FileDescriptorProto
 
 	protoPackages := make(map[string]*descriptorpb.FileDescriptorProto)
-	protoPackageDeps := make(map[string]map[string]struct{})
 	customStubs := map[string]*descriptorpb.FileDescriptorProto{}
 
 	for _, genType := range a.graph.Nodes {
@@ -143,38 +144,34 @@ func (a *Adapter) parse() error {
 			continue
 		}
 
-		if _, ok := protoPackages[protoPkg]; !ok {
-			goPkg := a.goPackageName(protoPkg)
-			protoPackages[protoPkg] = &descriptorpb.FileDescriptorProto{
-				Name:    relFileName(protoPkg),
-				Package: &protoPkg,
-				Syntax:  toPtr("proto3"),
-				Options: &descriptorpb.FileOptions{
-					GoPackage: &goPkg,
-				},
-			}
-			protoPackageDeps[protoPkg] = make(map[string]struct{})
-		}
-		fd := protoPackages[protoPkg]
-		fd.MessageType = append(fd.MessageType, messageDescriptor)
-		a.schemaProtoFiles[genType.Name] = *fd.Name
-
+		// Resolve dependencies before adding the message to its file, so a
+		// schema that fails here stays a per-schema error instead of leaving an
+		// unresolvable message behind for the linker.
 		depPaths, err := a.extractDepPaths(protoPkg, messageDescriptor, customStubs)
 		if err != nil {
 			a.errors[genType.Name] = err
 			continue
 		}
+
+		if _, ok := protoPackages[protoPkg]; !ok {
+			goPkg := a.goPackageName(protoPkg)
+			protoPackages[protoPkg] = &descriptorpb.FileDescriptorProto{
+				Name:    relFileName(protoPkg),
+				Package: toPtr(protoPkg),
+				Syntax:  toPtr("proto3"),
+				Options: &descriptorpb.FileOptions{
+					GoPackage: &goPkg,
+				},
+			}
+		}
+		fd := protoPackages[protoPkg]
+		fd.MessageType = append(fd.MessageType, messageDescriptor)
+		a.schemaProtoFiles[genType.Name] = fd.GetName()
+
 		for _, depPath := range depPaths {
-			depSet, ok := protoPackageDeps[protoPkg]
-			if !ok || depSet == nil {
-				depSet = make(map[string]struct{})
-				protoPackageDeps[protoPkg] = depSet
+			if !slices.Contains(fd.Dependency, depPath) {
+				fd.Dependency = append(fd.Dependency, depPath)
 			}
-			if _, seen := depSet[depPath]; seen {
-				continue
-			}
-			depSet[depPath] = struct{}{}
-			fd.Dependency = append(fd.Dependency, depPath)
 		}
 	}
 
@@ -231,11 +228,14 @@ func (a *Adapter) goPackageName(protoPkgName string) string {
 	return path.Join(entBase, "proto", slashed)
 }
 
-// schemaErrorSummary renders the per-schema parse failures stored in a.errors.
+// schemaErrorSummary renders the per-schema parse failures stored in a.errors,
+// leaving out schemas that are merely not generated.
 func (a *Adapter) schemaErrorSummary() string {
 	names := make([]string, 0, len(a.errors))
-	for name := range a.errors {
-		names = append(names, name)
+	for name, err := range a.errors {
+		if !errors.Is(err, ErrSchemaSkipped) {
+			names = append(names, name)
+		}
 	}
 	slices.Sort(names)
 	var b strings.Builder
@@ -259,6 +259,9 @@ func (a *Adapter) linkDependencyError() error {
 			continue
 		}
 		for _, e := range genType.Edges {
+			if _, skip := e.Annotations[SkipAnnotation]; skip {
+				continue
+			}
 			if _, failed := a.errors[e.Type.Name]; failed {
 				return &DanglingReferenceError{
 					Schema:    genType.Name,
@@ -291,7 +294,10 @@ func (a *Adapter) linkDependencyError() error {
 // graph schema. External custom types registered via RegisterCustomType are not
 // graph schemas and are ignored.
 func (a *Adapter) fieldReferencedSchema(f *gen.Field) string {
-	if f == nil || f.Annotations == nil {
+	if f == nil {
+		return ""
+	}
+	if _, skip := f.Annotations[SkipAnnotation]; skip {
 		return ""
 	}
 	if _, ok := f.Annotations[FieldAnnotation]; !ok {
@@ -403,13 +409,18 @@ func protoTypeShortName(typeName string) string {
 }
 
 func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.DescriptorProto, error) {
+	if genType.Annotations[MessageAnnotation] == nil {
+		return nil, ErrSchemaSkipped
+	}
 	msgAnnot, err := extractMessageAnnotation(genType)
-	if err != nil || !msgAnnot.Generate {
+	if err != nil {
+		return nil, err
+	}
+	if !msgAnnot.Generate {
 		return nil, ErrSchemaSkipped
 	}
 	msg := &descriptorpb.DescriptorProto{
-		Name:     &genType.Name,
-		EnumType: []*descriptorpb.EnumDescriptorProto(nil),
+		Name: toPtr(genType.Name),
 	}
 
 	// The default (non-user-defined) ID field is implicitly field number 1.
@@ -417,21 +428,12 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 	// the ID field and annotate the clone so repeated LoadAdapter calls are
 	// side-effect free.
 	idField := genType.ID
-	if !genType.ID.UserDefined {
-		annotations := genType.ID.Annotations
-		hasFieldAnno := false
-		if annotations != nil {
-			_, hasFieldAnno = annotations[FieldAnnotation]
-		}
-		if !hasFieldAnno {
-			clone := *genType.ID
-			clone.Annotations = make(map[string]any, len(annotations)+1)
-			for k, v := range annotations {
-				clone.Annotations[k] = v
-			}
-			clone.Annotations[FieldAnnotation] = Field(IDFieldNumber)
-			idField = &clone
-		}
+	if _, annotated := genType.ID.Annotations[FieldAnnotation]; !genType.ID.UserDefined && !annotated {
+		clone := *genType.ID
+		clone.Annotations = make(map[string]any, len(genType.ID.Annotations)+1)
+		maps.Copy(clone.Annotations, genType.ID.Annotations)
+		clone.Annotations[FieldAnnotation] = Field(IDFieldNumber)
+		idField = &clone
 	}
 
 	all := []*gen.Field{idField}
@@ -442,7 +444,7 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 			continue
 		}
 
-		protoField, err := toProtoFieldDescriptor(f)
+		protoField, err := toProtoFieldDescriptor(genType.Name, f, f == idField)
 		if err != nil {
 			return nil, err
 		}
@@ -473,9 +475,7 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 		if err != nil {
 			return nil, err
 		}
-		if descriptor != nil {
-			msg.Field = append(msg.Field, descriptor)
-		}
+		msg.Field = append(msg.Field, descriptor)
 	}
 
 	// Verify no duplicate field numbers
@@ -494,56 +494,43 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 }
 
 func (a *Adapter) extractEdgeFieldDescriptor(source *gen.Type, e *gen.Edge) (*descriptorpb.FieldDescriptorProto, error) {
-	t := descriptorpb.FieldDescriptorProto_TYPE_MESSAGE
-	msgTypeName := pascal(e.Type.Name)
-
 	edgeAnnotation, err := extractEdgeAnnotation(e)
 	if err != nil {
 		return nil, fmt.Errorf("entproto: failed extracting proto field number annotation: %w", err)
 	}
-
-	if edgeAnnotation.Number == 1 {
-		return nil, fmt.Errorf("entproto: edge %q has number 1 which is reserved for id", e.Name)
-	}
-
-	if num := int64(edgeAnnotation.Number); num > math.MaxInt32 || num < math.MinInt32 {
-		return nil, &FieldNumberOverflowError{
-			Schema: source.Name,
-			Field:  e.Name,
-			Number: edgeAnnotation.Number,
-		}
-	}
-	fieldNum := int32(edgeAnnotation.Number) //nolint:gosec
-	fieldDesc := &descriptorpb.FieldDescriptorProto{
-		Number: &fieldNum,
-		Name:   &e.Name,
-		Type:   &t,
-	}
-
-	if !e.Unique {
-		fieldDesc.Label = &repeatedFieldLabel
-	}
-
-	relType, ok := a.nodeByName[msgTypeName]
-	if !ok {
-		return nil, fmt.Errorf("entproto: could not find schema %q in graph", msgTypeName)
-	}
-	dstAnnotation, err := extractMessageAnnotation(relType)
-	if err != nil || !dstAnnotation.Generate {
-		return nil, fmt.Errorf("entproto: message %q is not generated", msgTypeName)
-	}
-
-	sourceAnnotation, err := extractMessageAnnotation(source)
+	fieldNum, err := checkFieldNumber(source.Name, "edge", e.Name, edgeAnnotation.Number, false)
 	if err != nil {
 		return nil, err
 	}
-	if sourceAnnotation.Package == dstAnnotation.Package {
-		fieldDesc.TypeName = &msgTypeName
-	} else {
-		fqn := dstAnnotation.Package + "." + msgTypeName
-		fieldDesc.TypeName = &fqn
+
+	target := e.Type
+	dstAnnotation, err := extractMessageAnnotation(target)
+	if err != nil || !dstAnnotation.Generate {
+		return nil, fmt.Errorf("entproto: edge %q references schema %q, which is not generated; annotate the edge with entproto.Skip()",
+			e.Name, target.Name)
+	}
+	sourcePkg, err := a.protoPackageName(source)
+	if err != nil {
+		return nil, err
+	}
+	targetPkg, err := a.protoPackageName(target)
+	if err != nil {
+		return nil, err
+	}
+	typeName := target.Name
+	if sourcePkg != targetPkg {
+		typeName = "." + targetPkg + "." + target.Name
 	}
 
+	fieldDesc := &descriptorpb.FieldDescriptorProto{
+		Number:   &fieldNum,
+		Name:     toPtr(e.Name),
+		Type:     toPtr(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE),
+		TypeName: &typeName,
+	}
+	if !e.Unique {
+		fieldDesc.Label = toPtr(descriptorpb.FieldDescriptorProto_LABEL_REPEATED)
+	}
 	return fieldDesc, nil
 }
 
@@ -555,122 +542,103 @@ func toProtoEnumDescriptor(fld *gen.Field) (*descriptorpb.EnumDescriptorProto, e
 	if err := enumAnnotation.Verify(fld); err != nil {
 		return nil, err
 	}
-	enumName := pascal(fld.Name)
 	dp := &descriptorpb.EnumDescriptorProto{
-		Name:  toPtr(enumName),
-		Value: []*descriptorpb.EnumValueDescriptorProto{},
+		Name:  toPtr(pascal(fld.Name)),
+		Value: make([]*descriptorpb.EnumValueDescriptorProto, 0, len(fld.Enums)+1),
 	}
 	if !fld.Default {
 		dp.Value = append(dp.Value, &descriptorpb.EnumValueDescriptorProto{
 			Number: toPtr[int32](0),
-			Name:   toPtr(strings.ToUpper(snake(fld.Name)) + "_UNSPECIFIED"),
+			Name:   toPtr(unspecifiedEnumValueName(fld)),
 		})
 	}
 	for _, opt := range fld.Enums {
-		n := strings.ToUpper(snake(NormalizeEnumIdentifier(opt.Value)))
-		if !enumAnnotation.OmitFieldPrefix {
-			n = strings.ToUpper(snake(fld.Name)) + "_" + n
-		}
 		dp.Value = append(dp.Value, &descriptorpb.EnumValueDescriptorProto{
 			Number: toPtr(enumAnnotation.Options[opt.Value]),
-			Name:   toPtr(n),
+			Name:   toPtr(enumAnnotation.protoValueName(fld, opt.Value)),
 		})
 	}
 	return dp, nil
 }
 
-func toProtoFieldDescriptor(f *gen.Field) (*descriptorpb.FieldDescriptorProto, error) {
-	fieldDesc := &descriptorpb.FieldDescriptorProto{
-		Name: &f.Name,
-	}
+func toProtoFieldDescriptor(schemaName string, f *gen.Field, isID bool) (*descriptorpb.FieldDescriptorProto, error) {
 	fann, err := extractFieldAnnotation(f)
 	if err != nil {
 		return nil, err
 	}
-	if num := int64(fann.Number); num > math.MaxInt32 || num < math.MinInt32 {
-		return nil, fmt.Errorf("value %v overflows int32", num)
+	fieldNumber, err := checkFieldNumber(schemaName, "field", f.Name, fann.Number, isID)
+	if err != nil {
+		return nil, err
 	}
-	fieldNumber := int32(fann.Number) //nolint:gosec
-	if fieldNumber == 1 && strings.ToUpper(f.Name) != "ID" {
-		return nil, fmt.Errorf("entproto: field %q has number 1 which is reserved for id", f.Name)
+	fieldDesc := &descriptorpb.FieldDescriptorProto{
+		Name:   toPtr(f.Name),
+		Number: &fieldNumber,
 	}
-	fieldDesc.Number = &fieldNumber
 	if fann.Type != descriptorpb.FieldDescriptorProto_Type(0) {
-		fieldDesc.Type = &fann.Type
-		if len(fann.TypeName) > 0 {
+		isReference := fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+			fann.Type == descriptorpb.FieldDescriptorProto_TYPE_ENUM
+		if isReference && fann.TypeName == "" {
+			return nil, fmt.Errorf("entproto: field %q uses entproto.Type(%s) without entproto.TypeName", f.Name, fann.Type)
+		}
+		fieldDesc.Type = toPtr(fann.Type)
+		if fann.TypeName != "" {
 			typeName := fann.TypeName
-			if fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
-				fann.Type == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+			if isReference {
 				typeName = normalizeCustomTypeName(typeName)
 			}
 			fieldDesc.TypeName = &typeName
 			if fann.Type == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && fann.ProtoFile != "" {
-				if fann.ProtoPackage != "" && fann.MessagePath != "" {
-					registerCustomTypeDetails(fann.TypeName, fann.ProtoFile, fann.ProtoPackage, fann.MessagePath)
-				} else {
-					registerCustomType(fann.TypeName, fann.ProtoFile)
-				}
+				registerCustomTypeDetails(fann.TypeName, fann.ProtoFile, fann.ProtoPackage, fann.MessagePath)
 			}
 		}
 		return fieldDesc, nil
 	}
 
-	// Extract type details
-	var pbType descriptorpb.FieldDescriptorProto_Type
-	var msgName string
-	var repeated bool
-
 	if f.Type.Type == field.TypeJSON {
-		switch f.Type.Ident {
-		case "[]string":
-			pbType = descriptorpb.FieldDescriptorProto_TYPE_STRING
-			repeated = true
-		case "[]int32":
-			pbType = descriptorpb.FieldDescriptorProto_TYPE_INT32
-			repeated = true
-		case "[]int64":
-			pbType = descriptorpb.FieldDescriptorProto_TYPE_INT64
-			repeated = true
-		case "[]uint32":
-			pbType = descriptorpb.FieldDescriptorProto_TYPE_UINT32
-			repeated = true
-		case "[]uint64":
-			pbType = descriptorpb.FieldDescriptorProto_TYPE_UINT64
-			repeated = true
-		default:
-			return nil, fmt.Errorf("unsupported field type %q", f.Type.ConstName())
+		elem, ok := repeatedJSONTypes[f.Type.Ident]
+		if !ok {
+			return nil, unsupportedFieldTypeError(f)
 		}
-	} else {
-		cfg, ok := typeMap[f.Type.Type]
-		if !ok || cfg.unsupported {
-			return nil, fmt.Errorf("unsupported field type %q", f.Type.ConstName())
-		}
-		pbType = cfg.pbType
-		msgName = cfg.msgTypeName
-		if cfg.namer != nil {
-			msgName = cfg.namer(f)
-		}
+		fieldDesc.Type = toPtr(elem)
+		fieldDesc.Label = toPtr(descriptorpb.FieldDescriptorProto_LABEL_REPEATED)
+		return fieldDesc, nil
 	}
 
-	fieldDesc.Type = &pbType
-	if msgName != "" {
-		fieldDesc.TypeName = &msgName
+	cfg, ok := typeMap[f.Type.Type]
+	if !ok || cfg.unsupported {
+		return nil, unsupportedFieldTypeError(f)
 	}
-	if repeated {
-		fieldDesc.Label = &repeatedFieldLabel
+	fieldDesc.Type = toPtr(cfg.pbType)
+	if cfg.namer != nil {
+		fieldDesc.TypeName = toPtr(cfg.namer(f))
 	}
 	return fieldDesc, nil
 }
 
-func toPtr[T any](t T) *T {
-	return &t
+func unsupportedFieldTypeError(f *gen.Field) error {
+	return fmt.Errorf("entproto: field %q has unsupported type %s (%s); set entproto.Type or entproto.MessageField, or annotate it with entproto.Skip()",
+		f.Name, f.Type.ConstName(), f.Type)
 }
 
-func extractGenTypeByName(graph *gen.Graph, name string) (*gen.Type, error) {
-	for _, sch := range graph.Nodes {
-		if sch.Name == name {
-			return sch, nil
-		}
+// checkFieldNumber validates n as the protobuf number of the field or edge
+// (kind) named member in schema and returns it as an int32.
+func checkFieldNumber(schema, kind, member string, n int, isID bool) (int32, error) {
+	if int64(n) > math.MaxInt32 || int64(n) < math.MinInt32 {
+		return 0, &FieldNumberOverflowError{Schema: schema, Field: member, Number: n}
 	}
-	return nil, fmt.Errorf("entproto: could not find schema %q in graph", name)
+	switch {
+	case n == IDFieldNumber && !isID:
+		return 0, fmt.Errorf("entproto: %s %q has number 1 which is reserved for id", kind, member)
+	case n < 1 || n > maxFieldNumber:
+		return 0, fmt.Errorf("entproto: %s %q of schema %q has number %d, outside the protobuf range 1-%d",
+			kind, member, schema, n, maxFieldNumber)
+	case n >= reservedFieldNumberStart && n <= reservedFieldNumberEnd:
+		return 0, fmt.Errorf("entproto: %s %q of schema %q has number %d, inside the range %d-%d reserved by protobuf",
+			kind, member, schema, n, reservedFieldNumberStart, reservedFieldNumberEnd)
+	}
+	return int32(n), nil
+}
+
+func toPtr[T any](t T) *T {
+	return &t
 }

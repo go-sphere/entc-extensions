@@ -6,20 +6,18 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/go-viper/mapstructure/v2"
-
 	"entgo.io/ent/entc/gen"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 // EnumAnnotation is the annotation name under which [Enum] is stored in ent
 // field annotations.
-const (
-	EnumAnnotation = "ProtoEnum"
-)
+const EnumAnnotation = "ProtoEnum"
 
 var (
-	// ErrEnumFieldsNotAnnotated is returned when an [Enum] annotation does not
-	// list exactly as many values as the ent enum field defines.
+	// ErrEnumFieldsNotAnnotated matches, with errors.Is, the error reported
+	// when an [Enum] annotation does not list exactly as many values as the ent
+	// enum field defines.
 	ErrEnumFieldsNotAnnotated = errors.New("entproto: all Enum options must be covered with an entproto.Enum annotation")
 	normalizeEnumIdent        = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
 )
@@ -40,7 +38,6 @@ type EnumOption func(*enum)
 // Violations are reported when the schema is converted, not when Enum is
 // called.
 func Enum(vals map[string]int32, opts ...EnumOption) *enum {
-	// apply options
 	e := &enum{Options: vals}
 	for _, op := range opts {
 		op(e)
@@ -76,51 +73,71 @@ func (e *enum) findByNumber(n int32) string {
 	return ""
 }
 
+// Verify checks the annotation against the ent enum field fld using the rules
+// documented on [Enum]. A value count mismatch matches
+// [ErrEnumFieldsNotAnnotated] with errors.Is.
 func (e *enum) Verify(fld *gen.Field) error {
 	// Verify that all fields on the Enum are in the annotation.
 	if len(e.Options) != len(fld.Enums) {
-		return ErrEnumFieldsNotAnnotated
+		return fmt.Errorf("%w: field %q has %d values, the annotation lists %d",
+			ErrEnumFieldsNotAnnotated, fld.Name, len(fld.Enums), len(e.Options))
 	}
-	pbIdentifiers := make(map[string]struct{}, len(fld.Enums))
+	pbNames := make(map[string]struct{}, len(fld.Enums)+1)
+	if !fld.Default {
+		pbNames[unspecifiedEnumValueName(fld)] = struct{}{}
+	}
 	for _, opt := range fld.Enums {
 		if _, ok := e.Options[opt.Value]; !ok {
-			return fmt.Errorf("entproto: Enum option %s is not annotated with"+
-				" a pbfield number using entproto.Enum", opt.Name)
+			return fmt.Errorf("entproto: value %q of enum field %q is not numbered by its entproto.Enum annotation",
+				opt.Value, fld.Name)
 		}
-		pbIdent := NormalizeEnumIdentifier(opt.Value)
-		if _, ok := pbIdentifiers[pbIdent]; ok {
-			return fmt.Errorf("entproto: Enum option %q produces conflicting pbfield"+
-				" name %q after normalization", opt.Name, pbIdent)
+		pbName := e.protoValueName(fld, opt.Value)
+		if _, ok := pbNames[pbName]; ok {
+			return fmt.Errorf("entproto: value %q of enum field %q produces the protobuf enum value name %q, which is already in use",
+				opt.Value, fld.Name, pbName)
 		}
-		pbIdentifiers[pbIdent] = struct{}{}
+		pbNames[pbName] = struct{}{}
 	}
 
-	// If default value is set on the pbfield, make sure it's option number is zero.
+	// A default value must map to number 0; without one, 0 is reserved for the
+	// generated <FIELD>_UNSPECIFIED value.
+	zeroValue := e.findByNumber(0)
 	if fld.Default {
 		dv, ok := fld.DefaultValue().(string)
 		if !ok {
-			return fmt.Errorf("entproto: default value on Enum pbfield %s should be a string", fld.Name)
+			return fmt.Errorf("entproto: default value of enum field %q should be a string", fld.Name)
 		}
-		zeroField := e.findByNumber(0)
-		if zeroField == "" {
-			return fmt.Errorf("entproto: Enum pbfield %q has a default value but"+
-				" entproto.Enum annotation doesn't contain an option with number 0", fld.Name)
+		if zeroValue == "" {
+			return fmt.Errorf("entproto: enum field %q has a default value but"+
+				" its entproto.Enum annotation doesn't number any value 0", fld.Name)
 		}
-		if zeroField != dv {
+		if zeroValue != dv {
 			return fmt.Errorf(
-				"entproto: default value for Enum pbfield %q is %q, but the proto annotation pbfield 0 is %q",
-				fld.Name, dv, zeroField)
+				"entproto: default value of enum field %q is %q, but its entproto.Enum annotation numbers %q as 0",
+				fld.Name, dv, zeroValue)
 		}
-	} else {
-		// Make sure no one is using the zero option number.
-		zeroField := e.findByNumber(0)
-		if zeroField != "" {
-			return fmt.Errorf("entproto: Enum pbfield %q has no default value but"+
-				" entproto.Enum annotation contains an option with number 0", fld.Name)
-		}
+	} else if zeroValue != "" {
+		return fmt.Errorf("entproto: enum field %q has no default value but"+
+			" its entproto.Enum annotation numbers %q as 0", fld.Name, zeroValue)
 	}
 
 	return nil
+}
+
+// protoValueName returns the protobuf enum value name generated for value of
+// the ent enum field fld.
+func (e *enum) protoValueName(fld *gen.Field, value string) string {
+	name := strings.ToUpper(snake(NormalizeEnumIdentifier(value)))
+	if e.OmitFieldPrefix {
+		return name
+	}
+	return strings.ToUpper(snake(fld.Name)) + "_" + name
+}
+
+// unspecifiedEnumValueName returns the name of the zero value generated for an
+// enum field without a default.
+func unspecifiedEnumValueName(fld *gen.Field) string {
+	return strings.ToUpper(snake(fld.Name)) + "_UNSPECIFIED"
 }
 
 // EnumValueNumber returns the protobuf number that the [Enum] annotation on fld
