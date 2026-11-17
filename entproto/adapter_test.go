@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
+	"entgo.io/ent/entc/load"
 	"entgo.io/ent/schema/field"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -475,5 +476,67 @@ func TestEnumVerify_CountMismatchWrapsSentinel(t *testing.T) {
 	err := Enum(map[string]int32{"on": 1}).Verify(fld)
 	if err == nil || !errors.Is(err, ErrEnumFieldsNotAnnotated) || !strings.Contains(err.Error(), `"status"`) {
 		t.Fatalf("error = %v, want ErrEnumFieldsNotAnnotated naming the field", err)
+	}
+}
+
+func TestEnumVerify_RejectsDuplicateNumbers(t *testing.T) {
+	typ, err := gen.NewType(&gen.Config{}, &load.Schema{
+		Name: "Item",
+		Fields: []*load.Field{{
+			Name:         "status",
+			Info:         &field.TypeInfo{Type: field.TypeEnum},
+			Default:      true,
+			DefaultValue: "on",
+			Enums:        []struct{ N, V string }{{N: "On", V: "on"}, {N: "Off", V: "off"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("gen.NewType: %v", err)
+	}
+	for range 20 {
+		err := Enum(map[string]int32{"on": 0, "off": 0}).Verify(typ.Fields[0])
+		if err == nil || !strings.Contains(err.Error(), "already used") {
+			t.Fatalf("default field error = %v, want duplicate enum number error", err)
+		}
+	}
+
+	dupNoDefault := &gen.Field{
+		Name:  "status",
+		Type:  &field.TypeInfo{Type: field.TypeEnum},
+		Enums: []gen.Enum{{Name: "On", Value: "on"}, {Name: "Off", Value: "off"}},
+	}
+	for range 20 {
+		err := Enum(map[string]int32{"on": 0, "off": 0}).Verify(dupNoDefault)
+		if err == nil || !strings.Contains(err.Error(), "already used") {
+			t.Fatalf("error = %v, want duplicate enum number error", err)
+		}
+	}
+	if err := Enum(map[string]int32{"on": 1, "off": 1}).Verify(dupNoDefault); err == nil || !strings.Contains(err.Error(), "already used") {
+		t.Fatalf("error = %v, want duplicate enum number error", err)
+	}
+}
+
+func TestEnumFindByNumber_EmptyValueSentinel(t *testing.T) {
+	e := Enum(map[string]int32{"": 0, "on": 1})
+	if val, ok := e.findByNumber(0); !ok || val != "" {
+		t.Fatalf("findByNumber(0) = (%q, %v), want (\"\", true)", val, ok)
+	}
+	if val, ok := e.findByNumber(99); ok || val != "" {
+		t.Fatalf("findByNumber(99) = (%q, %v), want (\"\", false)", val, ok)
+	}
+	dup := Enum(map[string]int32{"b": 0, "a": 0})
+	for range 20 {
+		if val, ok := dup.findByNumber(0); !ok || val != "a" {
+			t.Fatalf("findByNumber(0) = (%q, %v), want deterministic (\"a\", true)", val, ok)
+		}
+	}
+}
+
+func TestRelFileName_UsesSlashSeparator(t *testing.T) {
+	if got := *relFileName("acme.user.v1"); got != "acme/user/v1/v1.proto" {
+		t.Fatalf("relFileName = %q, want acme/user/v1/v1.proto", got)
+	}
+	if got := *relFileName("entpb"); got != "entpb/entpb.proto" {
+		t.Fatalf("relFileName = %q, want entpb/entpb.proto", got)
 	}
 }

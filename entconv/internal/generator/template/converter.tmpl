@@ -11,7 +11,7 @@
 {{ $enumType := .PbFieldDescriptor.GetEnumType }}
 {{ $enumName := printf "%s_%s" $typeInfo.Type.Name $enumType.GetName }}
 {{ $pbEnumIdent := protoIdent $enumName }}
-{{ $entLcase := camel $typeInfo.Type.Name }}
+{{ $entLcase := entEnumAlias $typeInfo.Type.Name }}
 {{ $entEnumIdent := entIdent $entLcase (.EntField.Name | pascal) }}
 {{ $mapping := . }}
 
@@ -53,7 +53,7 @@ func ToProto{{ $typeInfo.Type.Name }}(e *{{ entPackageIdent $typeInfo.Type.Name 
     }
     v := &{{ protoIdent $typeInfo.Type.Name }}{}
     {{- range $fieldMap.Fields }}
-    {{- $varName := .EntField.BuilderField }}
+    {{- $varName := localVar $typeInfo.Type.Name .EntField }}
     {{- $f := printf "e.%s" .EntField.StructField }}
     {{- if .EntField.Nillable }}
     if {{ $f }} != nil {
@@ -113,17 +113,18 @@ func ToEnt{{ $typeInfo.Type.Name }}(v *{{ protoIdent $typeInfo.Type.Name }}) (*{
     e.{{ $fieldName }} = {{ ident $conv.ToEntConstructor }}({{ $pbValue }})
     {{- end }}
     {{- else if $conv.ToEntConversion }}
+    {{- $toEntFn := toEntConv $conv .EntField }}
     {{- if $conv.ToEntConversionArg }}
     {{- if .EntField.Nillable }}
-    e.{{ $fieldName }} = new({{ $conv.ToEntConversion }}({{ $pbValue }}, {{ $conv.ToEntConversionArg }}))
+    e.{{ $fieldName }} = new({{ $toEntFn }}({{ $pbValue }}, {{ $conv.ToEntConversionArg }}))
     {{- else }}
-    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}({{ $pbValue }}, {{ $conv.ToEntConversionArg }})
+    e.{{ $fieldName }} = {{ $toEntFn }}({{ $pbValue }}, {{ $conv.ToEntConversionArg }})
     {{- end }}
     {{- else }}
     {{- if .EntField.Nillable }}
-    e.{{ $fieldName }} = new({{ $conv.ToEntConversion }}({{ $pbValue }}))
+    e.{{ $fieldName }} = new({{ $toEntFn }}({{ $pbValue }}))
     {{- else }}
-    e.{{ $fieldName }} = {{ $conv.ToEntConversion }}({{ $pbValue }})
+    e.{{ $fieldName }} = {{ $toEntFn }}({{ $pbValue }})
     {{- end }}
     {{- end }}
     {{- else }}

@@ -106,7 +106,12 @@ func (d *FieldMappingDescriptor) PbFieldName() string {
 // referenced with [EnumField] or [TypeName]. Only such fields have values
 // numbered by an [Enum] annotation.
 func (d *FieldMappingDescriptor) IsEntEnum() bool {
-	return d.IsEnumField && d.EntField != nil && d.EntField.Type.Type == field.TypeEnum
+	if !d.IsEnumField || d.EntField == nil || d.EntField.Type.Type != field.TypeEnum || d.PbFieldDescriptor == nil {
+		return false
+	}
+	enumType := d.PbFieldDescriptor.GetEnumType()
+	owner := d.PbFieldDescriptor.GetOwner()
+	return enumType != nil && owner != nil && enumType.GetParent() == owner
 }
 
 // IsProto3Optional reports whether the protobuf field is a proto3 optional

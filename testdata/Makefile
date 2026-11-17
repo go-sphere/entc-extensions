@@ -30,8 +30,6 @@ generate: clean
 verify:
 	@echo "[verify] run all tests"
 	go test ./...
-	@echo "[verify] run e2e assertions"
-	go test ./tests
 
 update-golden:
 	go test ./tests -run TestGeneratedGoldenFiles -update-golden

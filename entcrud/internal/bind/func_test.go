@@ -2,11 +2,13 @@ package bind
 
 import (
 	"errors"
+	"go/format"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-sphere/entc-extensions/entcrud/conf"
+	"github.com/go-sphere/entc-extensions/entcrud/internal/inspect"
 )
 
 type sourceEntity struct {
@@ -241,5 +243,138 @@ func TestGenBindFunc_StrictTypeCheckRejectsIntegerToString(t *testing.T) {
 	}
 	if got := mismatch.Items[0].Field; got != "Status" {
 		t.Fatalf("field = %q, want Status", got)
+	}
+}
+
+type metaPayload struct{ Note string }
+
+type metaSourceEntity struct {
+	Meta *metaPayload
+}
+
+type metaTargetMessage struct {
+	Meta *metaPayload
+}
+
+type metaCreateAction struct{}
+
+func (metaCreateAction) SetMeta(*metaPayload) {}
+
+type metaUpdateAction struct{}
+
+func (metaUpdateAction) SetMeta(*metaPayload) {}
+func (metaUpdateAction) ClearMeta()           {}
+
+func TestGenBindFunc_SingularPointerFieldPreservesPointer(t *testing.T) {
+	createEntity := conf.NewEntity(metaSourceEntity{}, metaTargetMessage{}, []any{metaCreateAction{}})
+	createCode, err := GenBindFunc(metaCreateAction{}, createEntity, nil, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc create failed: %v", err)
+	}
+	if strings.Contains(createCode, "*target.Meta") {
+		t.Fatalf("singular pointer field should not be dereferenced:\n%s", createCode)
+	}
+	if !strings.Contains(createCode, "source.SetMeta(target.Meta)") {
+		t.Fatalf("expected direct SetMeta(target.Meta):\n%s", createCode)
+	}
+	if !strings.Contains(createCode, "option.CanSetZero(") || !strings.Contains(createCode, "target.Meta != nil") {
+		t.Fatalf("expected CanSetZero check on singular pointer field:\n%s", createCode)
+	}
+
+	updateEntity := conf.NewEntity(metaSourceEntity{}, metaTargetMessage{}, []any{metaUpdateAction{}})
+	updateCode, err := GenBindFunc(metaUpdateAction{}, updateEntity, nil, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc update failed: %v", err)
+	}
+	if !strings.Contains(updateCode, "target.Meta == nil && option.ClearOnNil(") || !strings.Contains(updateCode, "source.ClearMeta()") {
+		t.Fatalf("expected ClearOnNil handling on singular pointer field:\n%s", updateCode)
+	}
+	if !strings.Contains(updateCode, "source.SetMeta(target.Meta)") {
+		t.Fatalf("expected direct SetMeta(target.Meta) in update:\n%s", updateCode)
+	}
+}
+
+type customOptEntity struct {
+	Birthday         time.Time
+	OptionalBirthday *time.Time
+	Meta             *metaPayload
+}
+
+type customOptTarget struct {
+	Birthday         int64
+	OptionalBirthday *int64
+	Meta             *metaPayload
+}
+
+type customOptCreate struct{}
+
+func (customOptCreate) SetBirthday(time.Time)         {}
+func (customOptCreate) SetOptionalBirthday(time.Time) {}
+
+type customOptUpdate struct{}
+
+func (customOptUpdate) SetBirthday(time.Time)                  {}
+func (customOptUpdate) SetNillableBirthday(*time.Time)         {}
+func (customOptUpdate) SetOptionalBirthday(time.Time)          {}
+func (customOptUpdate) SetNillableOptionalBirthday(*time.Time) {}
+func (customOptUpdate) ClearOptionalBirthday()                 {}
+func (customOptUpdate) SetMeta(*metaPayload)                   {}
+func (customOptUpdate) ClearMeta()                             {}
+
+func MetaPtrPassThrough(m *metaPayload) *metaPayload { return m }
+
+func TestGenBindFunc_CustomConverterHonorsCanSetZeroAndClearOnNil(t *testing.T) {
+	entity := conf.NewEntity(
+		customOptEntity{},
+		customOptTarget{},
+		[]any{customOptCreate{}, customOptUpdate{}},
+		conf.WithCustomFieldConverter("birthday", BirthdayFromUnix),
+		conf.WithCustomFieldConverter("optional_birthday", BirthdayFromUnix),
+		conf.WithCustomFieldConverter("meta", MetaPtrPassThrough),
+	)
+
+	createCode, err := GenBindFunc(customOptCreate{}, entity, entity.CustomFieldConverters, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc create failed: %v", err)
+	}
+	if !strings.Contains(createCode, "if option.CanSetZero(customoptentity.FieldBirthday) || target.Birthday != 0 {") {
+		t.Fatalf("non-pointer Create custom converter must honor CanSetZero:\n%s", createCode)
+	}
+
+	updateCode, err := GenBindFunc(customOptUpdate{}, entity, entity.CustomFieldConverters, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc update failed: %v", err)
+	}
+	if !strings.Contains(updateCode, "if target.OptionalBirthday == nil && option.ClearOnNil(customoptentity.FieldOptionalBirthday)") ||
+		!strings.Contains(updateCode, "source.ClearOptionalBirthday()") {
+		t.Fatalf("pointer custom converter must honor ClearOnNil:\n%s", updateCode)
+	}
+	if !strings.Contains(updateCode, "MetaPtrPassThrough(target.Meta)") {
+		t.Fatalf("pointer-accepting custom converter must receive target.Meta without dereference:\n%s", updateCode)
+	}
+}
+
+func TestGenBindFuncWithResolver_UsesResolvedAliases(t *testing.T) {
+	entity := conf.NewEntity(
+		sourceEntity{},
+		targetMessage{},
+		[]any{createAction{}},
+		conf.WithCustomFieldConverter("birthday", BirthdayFromUnix),
+	)
+	resolver := inspect.NewImportResolver("source", "target", "options", "option")
+	resolver.Resolve("github.com/go-sphere/entc-extensions/entcrud/internal/bind", "bind")
+	// Simulate subpackage colliding with an earlier target package of the same name.
+	resolver.Resolve("example.com/other/sourceentity", "sourceentity")
+	resolver.Resolve("github.com/go-sphere/entc-extensions/entcrud/internal/bind/sourceentity", "sourceentity")
+
+	code, err := GenBindFuncWithResolver(createAction{}, entity, entity.CustomFieldConverters, true, resolver)
+	if err != nil {
+		t.Fatalf("GenBindFuncWithResolver failed: %v", err)
+	}
+	if !strings.Contains(code, "sourceentity2.FieldBirthday") {
+		t.Fatalf("expected disambiguated subpackage alias sourceentity2, got:\n%s", code)
+	}
+	if _, err := format.Source([]byte("package out\n" + code)); err != nil {
+		t.Fatalf("generated function failed gofmt: %v\n%s", err, code)
 	}
 }

@@ -237,3 +237,86 @@ func TestLoadAdapter_OmitFieldPrefixCollisionAcrossFields(t *testing.T) {
 		t.Fatal("collision must not be reported as a skipped schema")
 	}
 }
+
+func TestLoadAdapter_EnumOverrideSkipsNestedEnumAndIsEntEnumIsFalse(t *testing.T) {
+	resetCustomTypeRegistry()
+	t.Cleanup(resetCustomTypeRegistry)
+
+	owner := testType("Owner", Message(PackageName("acme.owner.v1")), []*gen.Field{
+		func() *gen.Field {
+			f := annotatedField("status", field.TypeEnum, "", Field(2), Enum(map[string]int32{"on": 1}))
+			f.Enums = []gen.Enum{{Name: "On", Value: "on"}}
+			return f
+		}(),
+	}, nil)
+
+	enumWithOpts := func(name string, ann pbfield) *gen.Field {
+		f := annotatedField(name, field.TypeEnum, "", ann)
+		f.Enums = []gen.Enum{{Name: "A", Value: "a"}, {Name: "B", Value: "b"}}
+		return f
+	}
+	s := testType("S", Message(), []*gen.Field{
+		enumWithOpts("ext", EnumField(2, structpb.NullValue_NULL_VALUE).(pbfield)),
+		enumWithOpts("str", Field(3, Type(descriptorpb.FieldDescriptorProto_TYPE_STRING)).(pbfield)),
+		enumWithOpts("cross", Field(4, Type(descriptorpb.FieldDescriptorProto_TYPE_ENUM), TypeName("acme.owner.v1.Owner.Status")).(pbfield)),
+	}, nil)
+
+	a := loadTestAdapter(t, owner, s)
+	md, err := a.GetMessageDescriptor("S")
+	if err != nil {
+		t.Fatalf("GetMessageDescriptor(S) failed: %v", err)
+	}
+	if got := len(md.GetNestedEnumTypes()); got != 0 {
+		t.Fatalf("nested enum count = %d, want 0", got)
+	}
+	fm, err := a.FieldMap("S")
+	if err != nil {
+		t.Fatalf("FieldMap(S) failed: %v", err)
+	}
+	for _, name := range []string{"ext", "str", "cross"} {
+		m := fm[name]
+		if m == nil {
+			t.Fatalf("missing field %q in FieldMap", name)
+		}
+		if m.IsEntEnum() {
+			t.Fatalf("field %q: IsEntEnum() = true, want false", name)
+		}
+	}
+}
+
+func TestLoadAdapter_RejectsExternalProtoFileCollidingWithGeneratedProto(t *testing.T) {
+	resetCustomTypeRegistry()
+	t.Cleanup(resetCustomTypeRegistry)
+
+	colliding := MessageField(2, &timestamppb.Timestamp{}).(pbfield)
+	colliding.ProtoFile = "acme/target/v1/v1.proto"
+
+	target := testType("Target", Message(PackageName("acme.target.v1")), nil, nil)
+	bad := testType("Bad", Message(), []*gen.Field{
+		annotatedField("ts", field.TypeJSON, "*timestamppb.Timestamp", colliding),
+	}, nil)
+	good := testType("Good", Message(PackageName("acme.good.v1")), nil, nil)
+
+	a := loadTestAdapter(t, bad, target, good)
+	_, err := a.GetMessageDescriptor("Bad")
+	if err == nil || !strings.Contains(err.Error(), "collides with generated proto file") {
+		t.Fatalf("GetMessageDescriptor(Bad) error = %v, want collision error", err)
+	}
+	if _, err := a.GetMessageDescriptor("Target"); err != nil {
+		t.Fatalf("GetMessageDescriptor(Target) failed: %v", err)
+	}
+	if _, ok := a.GeneratedFileDescriptors()["acme/target/v1/v1.proto"]; !ok {
+		t.Fatal("Target's generated file descriptor missing after collision rejection on Bad")
+	}
+
+	// Also reject uncleaned relative paths colliding with own package file.
+	selfCollide := MessageField(2, &timestamppb.Timestamp{}).(pbfield)
+	selfCollide.ProtoFile = "./entpb/entpb.proto"
+	badSelf := testType("BadSelf", Message(), []*gen.Field{
+		annotatedField("ts", field.TypeJSON, "*timestamppb.Timestamp", selfCollide),
+	}, nil)
+	a2 := loadTestAdapter(t, badSelf, good)
+	if _, err := a2.GetMessageDescriptor("BadSelf"); err == nil || !strings.Contains(err.Error(), "collides with generated proto file") {
+		t.Fatalf("GetMessageDescriptor(BadSelf) error = %v, want collision error", err)
+	}
+}

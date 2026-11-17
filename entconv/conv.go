@@ -2,6 +2,7 @@ package entconv
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -64,6 +65,9 @@ type Options struct {
 	// [MissingProtoPolicyWarn]. Nil means the warning is printed to standard
 	// error. It is called synchronously at most once per generation.
 	WarningHandler func(error)
+	// AutoFill runs [entproto.FixGraph] on the loaded ent graph before matching
+	// schemas and validating contracts, matching [entproto.WithAutoFill].
+	AutoFill bool
 }
 
 // MissingProtoPolicy selects how generation treats ent schemas without a
@@ -212,6 +216,14 @@ func WithWarningHandler(h func(error)) Option {
 	}
 }
 
+// WithAutoFill enables [Options.AutoFill] so [entproto.FixGraph] runs on the
+// loaded ent graph before converter generation.
+func WithAutoFill() Option {
+	return func(o *Options) {
+		o.AutoFill = true
+	}
+}
+
 // RequiredOptionError reports a required [Options] field that is empty. Field
 // names the option: "ProtoFile", "SchemaPath", "EntPackage" (for
 // EntPackagePath), "ProtoPackage" (for ConvPackage), "ProtoPackagePath", or
@@ -333,6 +345,11 @@ func prepareGenerator(opts *Options) (*generator.Generator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading ent graph: %w", err)
 	}
+	if opts.AutoFill {
+		if err := entproto.FixGraph(g); err != nil {
+			return nil, fmt.Errorf("auto-filling entproto annotations: %w", err)
+		}
+	}
 	// Fail fast when the IDType option diverges from the real generated ent
 	// structs (when they are available on disk). Without this check the
 	// generator can emit converters that do not compile.
@@ -421,6 +438,9 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) ([]
 	missing := make([]string, 0)
 
 	for _, node := range g.Nodes {
+		if isSkipGenSchema(node) {
+			continue
+		}
 		protoType, ok := protoTypes[node.Name]
 		if !ok {
 			missing = append(missing, node.Name)
@@ -438,6 +458,27 @@ func matchTypes(g *gen.Graph, protoTypes map[string]*generator.ProtoMessage) ([]
 		return typesToGenerate, &MissingProtoMessagesError{Missing: missing}
 	}
 	return typesToGenerate, nil
+}
+
+func isSkipGenSchema(node *gen.Type) bool {
+	if node == nil || node.Annotations == nil {
+		return false
+	}
+	raw, ok := node.Annotations[entproto.MessageAnnotation]
+	if !ok || raw == nil {
+		return false
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	var msg struct {
+		Generate *bool `json:"Generate"`
+	}
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return false
+	}
+	return msg.Generate != nil && !*msg.Generate
 }
 
 // ProtoFileInfo holds the parsed contents of a generated .pb.go file: the
@@ -462,27 +503,40 @@ func parseProtoFile(filePath string) (*ProtoFileInfo, error) {
 		Consts:   make(map[string]struct{}),
 	}
 
-	ast.Inspect(node, func(n ast.Node) bool {
-		switch spec := n.(type) {
-		case *ast.TypeSpec:
-			structType, ok := spec.Type.(*ast.StructType)
-			if !ok {
-				return true
+	for _, decl := range node.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		switch gd.Tok {
+		case token.TYPE:
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				structType, ok := ts.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				msg := &generator.ProtoMessage{
+					Name:   ts.Name.Name,
+					Fields: parseStructFields(structType),
+				}
+				info.Messages[msg.Name] = msg
 			}
-			msg := &generator.ProtoMessage{
-				Name:   spec.Name.Name,
-				Fields: parseStructFields(structType),
-			}
-			info.Messages[msg.Name] = msg
-		case *ast.ValueSpec:
-			// Top-level const declarations (enum values) declare exactly one
-			// name per spec; collect them all.
-			for _, name := range spec.Names {
-				info.Consts[name.Name] = struct{}{}
+		case token.CONST:
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, name := range vs.Names {
+					info.Consts[name.Name] = struct{}{}
+				}
 			}
 		}
-		return true
-	})
+	}
 
 	return info, nil
 }
@@ -635,12 +689,26 @@ func expectedProtoGoType(mapping *entproto.FieldMappingDescriptor) string {
 		name = "float64"
 	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
 		enum := fieldDescriptor.GetEnumType()
-		name = protoDescriptorGoName(enum.GetFullyQualifiedName(), enum.GetFile().GetPackage())
+		if enum == nil {
+			return ""
+		}
+		pkg := ""
+		if file := enum.GetFile(); file != nil {
+			pkg = file.GetPackage()
+		}
+		name = protoDescriptorGoName(enum.GetFullyQualifiedName(), pkg)
 	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
 		message := fieldDescriptor.GetMessageType()
-		name = protoDescriptorGoName(message.GetFullyQualifiedName(), message.GetFile().GetPackage())
+		if message == nil {
+			return ""
+		}
+		pkg := ""
+		if file := message.GetFile(); file != nil {
+			pkg = file.GetPackage()
+		}
+		name = protoDescriptorGoName(message.GetFullyQualifiedName(), pkg)
 	}
-	if fieldDescriptor.IsRepeated() && name != "[]byte" {
+	if fieldDescriptor.IsRepeated() {
 		if fieldDescriptor.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
 			name = "[]*" + name
 		} else {
@@ -655,8 +723,39 @@ func expectedProtoGoType(mapping *entproto.FieldMappingDescriptor) string {
 }
 
 func protoDescriptorGoName(fullName, packageName string) string {
-	name := strings.TrimPrefix(fullName, packageName+".")
-	return strings.ReplaceAll(name, ".", "_")
+	name := strings.TrimPrefix(fullName, ".")
+	if packageName != "" {
+		name = strings.TrimPrefix(name, packageName+".")
+	}
+	return goCamelCase(name)
+}
+
+// goCamelCase matches protoc-gen-go's GoCamelCase identifier conversion for
+// dot-separated protobuf descriptor names.
+func goCamelCase(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '.' && i+1 < len(s) && 'a' <= s[i+1] && s[i+1] <= 'z':
+		case c == '.':
+			b = append(b, '_')
+		case c == '_' && (i == 0 || s[i-1] == '.'):
+			b = append(b, 'X')
+		case c == '_' && i+1 < len(s) && 'a' <= s[i+1] && s[i+1] <= 'z':
+		case '0' <= c && c <= '9':
+			b = append(b, c)
+		default:
+			if 'a' <= c && c <= 'z' {
+				c -= 'a' - 'A'
+			}
+			b = append(b, c)
+			for ; i+1 < len(s) && 'a' <= s[i+1] && s[i+1] <= 'z'; i++ {
+				b = append(b, s[i+1])
+			}
+		}
+	}
+	return string(b)
 }
 
 func canonicalProtoGoType(typeName string) string {

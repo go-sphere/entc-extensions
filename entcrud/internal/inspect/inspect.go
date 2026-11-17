@@ -4,10 +4,13 @@ package inspect
 
 import (
 	"fmt"
+	"go/parser"
+	"go/token"
 	"path"
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -21,65 +24,63 @@ func IndirectValue(value reflect.Value) reflect.Value {
 
 // TypeName returns the name of the most deeply dereferenced type of the given value.
 func TypeName(value any) string {
-	return IndirectValue(reflect.ValueOf(value)).Type().Name()
-}
-
-// ExtractTypeName returns the simple type name without package prefix.
-func ExtractTypeName(val any) string {
-	value := IndirectValue(reflect.ValueOf(val))
-	typeOf := value.Type()
-	return typeOf.Name()
+	if value == nil {
+		return ""
+	}
+	v := IndirectValue(reflect.ValueOf(value))
+	if !v.IsValid() {
+		return ""
+	}
+	return v.Type().Name()
 }
 
 // ExtractPackagePath returns the full import path of the package containing the type.
 func ExtractPackagePath(val any) string {
+	if val == nil {
+		return ""
+	}
 	value := IndirectValue(reflect.ValueOf(val))
-	typeOf := value.Type()
-	return typeOf.PkgPath()
+	if !value.IsValid() {
+		return ""
+	}
+	return value.Type().PkgPath()
 }
 
 // ExtractPackageName extracts the package name from a struct value's type information.
 func ExtractPackageName(val any) string {
-	value := IndirectValue(reflect.ValueOf(val))
-	typeOf := value.Type()
-	fullName := typeOf.String()
-	if !strings.Contains(fullName, ".") {
+	if val == nil {
 		return ""
 	}
-	parts := strings.Split(fullName, ".")
-	return parts[0]
+	value := IndirectValue(reflect.ValueOf(val))
+	if !value.IsValid() {
+		return ""
+	}
+	pkg, _, ok := strings.Cut(value.Type().String(), ".")
+	if !ok {
+		return ""
+	}
+	return pkg
 }
 
 // ExtractSubPackageName extracts the sub-package name from a struct value's type information.
 // For example, for ent.Example, it returns "example".
 func ExtractSubPackageName(val any) string {
-	value := IndirectValue(reflect.ValueOf(val))
-	typeOf := value.Type()
-	typeName := typeOf.Name()
-	// typeName examples:
-	// Example -> "example"
-	// EdgeItem -> "edgeitem"
+	typeName := TypeName(val)
+	if typeName == "" {
+		return ""
+	}
 	return strings.ToLower(typeName)
 }
 
 // ExtractSubPackagePath extracts the full import path to the sub-package from a struct value's type information.
 // For example, for ent.Example, it returns "github.com/xxx/ent/example".
 func ExtractSubPackagePath(val any) string {
-	value := IndirectValue(reflect.ValueOf(val))
-	typeOf := value.Type()
-	fullName := typeOf.String()
-	// fullName examples:
-	// ent.Example -> "example"
-	// ent.EdgeItem -> "edgeitem"
-	// *ent.Example -> "example"
-	parts := strings.Split(fullName, ".")
-	if len(parts) >= 2 {
-		subPkg := strings.ToLower(parts[len(parts)-1])
-		pkgPath := typeOf.PkgPath()
-		// pkgPath is like "github.com/xxx/ent", we need to append the subpackage
-		return pkgPath + "/" + subPkg
+	pkgPath := ExtractPackagePath(val)
+	subPkg := ExtractSubPackageName(val)
+	if pkgPath == "" || subPkg == "" {
+		return ""
 	}
-	return ""
+	return path.Join(pkgPath, subPkg)
 }
 
 // ExtractPublicFields extracts all public (exported) fields from a struct using reflection.
@@ -207,18 +208,45 @@ func generateCheckExpr(sourceName string, field reflect.StructField, wantZero bo
 	}
 }
 
-// GenerateTypeConversion generates Go code for type conversion from target field to source field.
-func GenerateTypeConversion(_ reflect.StructField, sourceType reflect.Type) string {
-	return sourceType.String()
-}
-
 // GenerateTypeConversionExpr generates Go code for type conversion expression.
 func GenerateTypeConversionExpr(targetField reflect.StructField, sourceType reflect.Type) string {
+	return GenerateTypeConversionExprWithAlias(targetField, sourceType, "")
+}
+
+// GenerateTypeConversionExprWithAlias generates Go code for type conversion
+// expression, rewriting the source type's package qualifier to pkgAlias when
+// non-empty.
+func GenerateTypeConversionExprWithAlias(targetField reflect.StructField, sourceType reflect.Type, pkgAlias string) string {
 	value := "target." + targetField.Name
-	if targetField.Type.Kind() == reflect.Pointer {
+	if targetField.Type.Kind() == reflect.Pointer && sourceType.Kind() != reflect.Pointer {
 		value = "*" + value
 	}
-	return fmt.Sprintf("%s(%s)", sourceType.String(), value)
+	typeExpr := sourceType.String()
+	if pkgAlias != "" {
+		typeExpr = rewriteTypePkgAlias(typeExpr, sourceType, pkgAlias)
+	}
+	return fmt.Sprintf("%s(%s)", typeExpr, value)
+}
+
+func rewriteTypePkgAlias(typeExpr string, sourceType reflect.Type, pkgAlias string) string {
+	elem := sourceType
+	prefix := ""
+	for elem.Kind() == reflect.Pointer || elem.Kind() == reflect.Slice {
+		if elem.Kind() == reflect.Pointer {
+			prefix += "*"
+		} else {
+			prefix += "[]"
+		}
+		elem = elem.Elem()
+	}
+	origPkg, typeName, ok := strings.Cut(elem.String(), ".")
+	if !ok || origPkg == "" || origPkg == pkgAlias {
+		return typeExpr
+	}
+	if strings.HasPrefix(typeExpr, prefix+origPkg+".") {
+		return prefix + pkgAlias + "." + typeName
+	}
+	return typeExpr
 }
 
 // Import represents a Go import with path and optional alias.
@@ -235,40 +263,133 @@ func ExtractImport(val any) Import {
 	}
 }
 
-// ExtractPackageImport extracts both the package path and package name from a struct value.
-// Deprecated: Use ExtractImport instead.
-func ExtractPackageImport(val any) Import {
-	return ExtractImport(val)
+// ImportResolver allocates collision-free Go import aliases for a single
+// generated file while keeping reserved identifier names (such as function
+// parameters and local variables) free from shadowing.
+type ImportResolver struct {
+	used    map[string]struct{}
+	byPath  map[string]string
+	imports []Import
 }
 
-// DeduplicateImports removes duplicate import entries and sorts them for consistent output.
+// NewImportResolver returns an ImportResolver with reserved identifiers marked
+// unavailable as package aliases.
+func NewImportResolver(reserved ...string) *ImportResolver {
+	used := make(map[string]struct{}, len(reserved))
+	for _, r := range reserved {
+		if r != "" {
+			used[r] = struct{}{}
+		}
+	}
+	return &ImportResolver{
+		used:   used,
+		byPath: make(map[string]string),
+	}
+}
+
+// Resolve records pkgPath and returns the collision-free Go package identifier
+// assigned to it in this file.
+func (r *ImportResolver) Resolve(pkgPath, preferredAlias string) string {
+	if pkgPath == "" {
+		return sanitizeIdent(preferredAlias)
+	}
+	if alias, ok := r.byPath[pkgPath]; ok {
+		return alias
+	}
+	base := sanitizeIdent(preferredAlias)
+	if base == "" {
+		base = fallbackPackageName(pkgPath)
+	}
+	alias := base
+	for i := 2; ; i++ {
+		if _, exists := r.used[alias]; !exists {
+			break
+		}
+		alias = fmt.Sprintf("%s%d", base, i)
+	}
+	r.used[alias] = struct{}{}
+	r.byPath[pkgPath] = alias
+	r.imports = append(r.imports, Import{Path: pkgPath, Alias: alias})
+	return alias
+}
+
+// AliasFor returns the alias already assigned to pkgPath, or fallback if
+// pkgPath was not registered.
+func (r *ImportResolver) AliasFor(pkgPath, fallback string) string {
+	if r != nil && pkgPath != "" {
+		if alias, ok := r.byPath[pkgPath]; ok {
+			return alias
+		}
+	}
+	return fallback
+}
+
+// Imports returns the resolved imports in registration order.
+func (r *ImportResolver) Imports() []Import {
+	out := make([]Import, len(r.imports))
+	copy(out, r.imports)
+	return out
+}
+
+// DeduplicateImports removes duplicate import entries, disambiguates colliding
+// package identifiers across distinct paths, and sorts them for consistent output.
 func DeduplicateImports(extraImports []Import) []Import {
-	seen := make(map[Import]bool)
-	result := make([]Import, 0, len(extraImports))
+	byPath := make(map[string]Import, len(extraImports))
+	paths := make([]string, 0, len(extraImports))
 	for _, item := range extraImports {
 		if item.Path == "" {
 			continue
 		}
-		if !seen[item] {
-			seen[item] = true
-			result = append(result, item)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Path == result[j].Path {
-			return result[i].Alias < result[j].Alias
-		}
-		return result[i].Path < result[j].Path
-	})
-	for i, item := range result {
-		if item.Alias == "" {
+		if existing, ok := byPath[item.Path]; ok {
+			if existing.Alias == "" && item.Alias != "" {
+				byPath[item.Path] = item
+			}
 			continue
 		}
-		if pkgName := path.Base(item.Path); pkgName == item.Alias {
-			result[i].Alias = ""
+		byPath[item.Path] = item
+		paths = append(paths, item.Path)
+	}
+	sort.Strings(paths)
+
+	usedIdents := make(map[string]struct{}, len(paths))
+	result := make([]Import, 0, len(paths))
+	for _, p := range paths {
+		item := byPath[p]
+		ident := sanitizeIdent(item.Alias)
+		if ident == "" {
+			ident = fallbackPackageName(item.Path)
 		}
+		if _, used := usedIdents[ident]; used {
+			base := ident
+			for i := 2; ; i++ {
+				cand := fmt.Sprintf("%s%d", base, i)
+				if _, exists := usedIdents[cand]; !exists {
+					ident = cand
+					break
+				}
+			}
+			item.Alias = ident
+		} else if item.Alias != "" && item.Alias != ident {
+			item.Alias = ident
+		}
+		usedIdents[ident] = struct{}{}
+
+		if item.Alias != "" && canElideAlias(item.Path, item.Alias) {
+			item.Alias = ""
+		}
+		result = append(result, item)
 	}
 	return result
+}
+
+func canElideAlias(importPath, alias string) bool {
+	base := path.Base(importPath)
+	if alias != base || !token.IsIdentifier(alias) {
+		return false
+	}
+	// /v2+ modules commonly declare the parent package name rather than "v2", so
+	// an explicit "v2" alias must be kept to avoid binding the wrong identifier.
+	return !isMajorVersionSuffix(base)
 }
 
 // FuncInfo holds metadata about a function that can be used for code generation.
@@ -295,32 +416,14 @@ func GetFuncInfo(fn any) FuncInfo {
 	}
 
 	full := rf.Name()
-	// full examples:
-	// github.com/xxx/project/entconv.GenerateConverterFile
-	// github.com/xxx/project/entconv.(*T).Method
-	// github.com/xxx/project/entconv.GenerateConverterFile.func1
-
-	// Find the boundary between "package path + package name" and "symbol name":
-	// That is: after the last "/", find the first "."
-	lastSlash := strings.LastIndex(full, "/")
-	searchFrom := 0
-	if lastSlash != -1 {
-		searchFrom = lastSlash + 1
-	}
-	firstDotAfterSlash := strings.Index(full[searchFrom:], ".")
-	if firstDotAfterSlash == -1 {
-		// Rare fallback: no dot, cannot split
+	importPath, symbol, ok := splitFuncFullName(full)
+	if !ok {
 		return FuncInfo{FullName: full, Name: full}
 	}
-	firstDotAfterSlash += searchFrom
 
-	importPath := full[:firstDotAfterSlash] // up to end of package name (excluding dot)
-	symbol := full[firstDotAfterSlash+1:]   // everything after the dot: function name/method/closure
-
-	// Package name: after last "/" in importPath
-	pkg := importPath
-	if i := strings.LastIndex(importPath, "/"); i != -1 {
-		pkg = importPath[i+1:]
+	pkg := packageNameFromSource(rf, pc)
+	if pkg == "" {
+		pkg = fallbackPackageName(importPath)
 	}
 
 	return FuncInfo{
@@ -329,4 +432,113 @@ func GetFuncInfo(fn any) FuncInfo {
 		Name:       symbol,
 		FullName:   full,
 	}
+}
+
+func splitFuncFullName(full string) (importPath, symbol string, ok bool) {
+	head := full
+	if idx := strings.IndexAny(head, "[("); idx != -1 {
+		head = head[:idx]
+	}
+	lastSlash := strings.LastIndex(head, "/")
+	searchFrom := 0
+	if lastSlash != -1 {
+		searchFrom = lastSlash + 1
+	}
+	dotRel := strings.Index(head[searchFrom:], ".")
+	if dotRel == -1 {
+		return "", "", false
+	}
+	dot := searchFrom + dotRel
+	return unescapeSymbolPath(full[:dot]), full[dot+1:], true
+}
+
+func packageNameFromSource(rf *runtime.Func, pc uintptr) string {
+	file, _ := rf.FileLine(pc)
+	if file == "" {
+		return ""
+	}
+	f, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.PackageClauseOnly)
+	if err != nil || f.Name == nil {
+		return ""
+	}
+	return f.Name.Name
+}
+
+func fallbackPackageName(importPath string) string {
+	seg := path.Base(importPath)
+	if isMajorVersionSuffix(seg) {
+		dir := path.Dir(importPath)
+		if dir != "." && dir != "/" {
+			seg = path.Base(dir)
+		}
+	}
+	if i := strings.LastIndex(seg, ".v"); i > 0 && isDigits(seg[i+2:]) {
+		seg = seg[:i]
+	}
+	return sanitizeIdent(seg)
+}
+
+func isMajorVersionSuffix(seg string) bool {
+	if len(seg) < 2 || seg[0] != 'v' || !isDigits(seg[1:]) {
+		return false
+	}
+	n, err := strconv.Atoi(seg[1:])
+	return err == nil && n >= 2
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizeIdent(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	for i, r := range s {
+		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+		isDigit := r >= '0' && r <= '9'
+		switch {
+		case isLetter || (i > 0 && isDigit):
+			b.WriteRune(r)
+		case i == 0 && isDigit:
+			b.WriteByte('_')
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	ident := b.String()
+	if ident == "" || ident == "_" || token.Lookup(ident).IsKeyword() {
+		return "pkg_" + ident
+	}
+	return ident
+}
+
+// unescapeSymbolPath reverses cmd/internal/objabi.PathToPrefix %xx escaping.
+func unescapeSymbolPath(s string) string {
+	if !strings.ContainsRune(s, '%') {
+		return s
+	}
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '%' && i+2 < len(s) {
+			if b, err := strconv.ParseUint(s[i+1:i+3], 16, 8); err == nil {
+				out = append(out, byte(b))
+				i += 3
+				continue
+			}
+		}
+		out = append(out, s[i])
+		i++
+	}
+	return string(out)
 }

@@ -7,27 +7,41 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 	if option.CanSetField({{.FieldKeyPath}}) {
 		{{- if .HasCustomConverter}}
 			{{- if .TargetFieldIsPtr}}
-				{{- if .CanSettNillable}}
-					if target.{{.TargetField.Name}} != nil {
-						source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(*target.{{.TargetField.Name}}))
+				{{- if .CanClearOnNil}}
+					if target.{{.TargetField.Name}} == nil && option.ClearOnNil({{.FieldKeyPath}}) {
+						source.{{.ClearOnNilFuncName}}()
 					} else {
-						source.{{.SettNillableFuncName}}(nil)
+						{{- if .CanSettNillable}}
+							if target.{{.TargetField.Name}} != nil {
+								source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}({{if not .CustomConverterTakesPtr}}*{{end}}target.{{.TargetField.Name}}))
+							} else {
+								source.{{.SettNillableFuncName}}(nil)
+							}
+						{{- else}}
+							if target.{{.TargetField.Name}} != nil {
+								source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}({{if not .CustomConverterTakesPtr}}*{{end}}target.{{.TargetField.Name}}))
+							}
+						{{- end}}
 					}
 				{{- else}}
-					if target.{{.TargetField.Name}} != nil {
-						source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(*target.{{.TargetField.Name}}))
-					}
+					{{- if .CanSettNillable}}
+						if target.{{.TargetField.Name}} != nil {
+							source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}({{if not .CustomConverterTakesPtr}}*{{end}}target.{{.TargetField.Name}}))
+						} else {
+							source.{{.SettNillableFuncName}}(nil)
+						}
+					{{- else}}
+						if target.{{.TargetField.Name}} != nil {
+							source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}({{if not .CustomConverterTakesPtr}}*{{end}}target.{{.TargetField.Name}}))
+						}
+					{{- end}}
 				{{- end}}
 			{{- else}}
-				{{- if .CanSettNillable}}
-					if option.CanSetZero({{.FieldKeyPath}}) || {{GenNotZeroCheck "target" .TargetField}} {
-						source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(target.{{.TargetField.Name}}))
-					}
-				{{- else}}
+				if option.CanSetZero({{.FieldKeyPath}}) || {{GenNotZeroCheck "target" .TargetField}} {
 					source.{{.SetterFuncName}}({{.CustomConverter.Package}}.{{.CustomConverter.Name}}(target.{{.TargetField.Name}}))
-				{{- end}}
+				}
 			{{- end}}
-		{{- else if .TargetFieldIsPtr}}
+		{{- else if .DerefTargetPtr}}
 			{{- if .CanSettNillable}}
 				{{- if .CanClearOnNil}}
 					if target.{{.TargetField.Name}} == nil && option.ClearOnNil({{.FieldKeyPath}}) {
@@ -37,7 +51,7 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 							source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
 						{{- else}}
 							if target.{{.TargetField.Name}} != nil {
-								source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
+								source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType .SetterArgPkgAlias}})
 							} else {
 								source.{{.SettNillableFuncName}}(nil)
 							}
@@ -48,27 +62,49 @@ func {{.FuncName}}(source *{{.SourcePkgName}}.{{.ActionName}}, target *{{.Target
 						source.{{.SettNillableFuncName}}(target.{{.TargetField.Name}})
 					{{- else}}
 						if target.{{.TargetField.Name}} != nil {
-							source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
+							source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType .SetterArgPkgAlias}})
 						} else {
 							source.{{.SettNillableFuncName}}(nil)
 						}
 					{{- end}}
 				{{- end}}
 			{{- else}}
-				if target.{{.TargetField.Name}} != nil {
-					{{- if .TargetSourceIsSomeType}}
-						source.{{.SetterFuncName}}(*target.{{.TargetField.Name}})
-					{{- else}}
-						source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
-					{{- end}}
-				}
+				{{- if .CanClearOnNil}}
+					if target.{{.TargetField.Name}} == nil && option.ClearOnNil({{.FieldKeyPath}}) {
+						source.{{.ClearOnNilFuncName}}()
+					} else if target.{{.TargetField.Name}} != nil {
+						{{- if .TargetSourceIsSomeType}}
+							source.{{.SetterFuncName}}(*target.{{.TargetField.Name}})
+						{{- else}}
+							source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType .SetterArgPkgAlias}})
+						{{- end}}
+					}
+				{{- else}}
+					if target.{{.TargetField.Name}} != nil {
+						{{- if .TargetSourceIsSomeType}}
+							source.{{.SetterFuncName}}(*target.{{.TargetField.Name}})
+						{{- else}}
+							source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType .SetterArgPkgAlias}})
+						{{- end}}
+					}
+				{{- end}}
 			{{- end}}
+		{{- else if and .TargetFieldIsPtr .CanClearOnNil}}
+			if target.{{.TargetField.Name}} == nil && option.ClearOnNil({{.FieldKeyPath}}) {
+				source.{{.ClearOnNilFuncName}}()
+			} else if option.CanSetZero({{.FieldKeyPath}}) || {{GenNotZeroCheck "target" .TargetField}} {
+				{{- if .TargetSourceIsSomeType}}
+					source.{{.SetterFuncName}}(target.{{.TargetField.Name}})
+				{{- else}}
+					source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType .SetterArgPkgAlias}})
+				{{- end}}
+			}
 		{{- else}}
 			if option.CanSetZero({{.FieldKeyPath}}) || {{GenNotZeroCheck "target" .TargetField}} {
 				{{- if .TargetSourceIsSomeType}}
 					source.{{.SetterFuncName}}(target.{{.TargetField.Name}})
 				{{- else}}
-					source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType}})
+					source.{{.SetterFuncName}}({{GenTypeConversionExpr .TargetField .SetterArgType .SetterArgPkgAlias}})
 				{{- end}}
 			}
 		{{- end}}

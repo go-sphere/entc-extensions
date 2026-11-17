@@ -3,7 +3,9 @@ package entproto
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"entgo.io/ent/entc/gen"
@@ -64,13 +66,13 @@ func (*enum) Name() string {
 	return EnumAnnotation
 }
 
-func (e *enum) findByNumber(n int32) string {
-	for k, v := range e.Options {
-		if v == n {
-			return k
+func (e *enum) findByNumber(n int32) (string, bool) {
+	for _, k := range slices.Sorted(maps.Keys(e.Options)) {
+		if e.Options[k] == n {
+			return k, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // Verify checks the annotation against the ent enum field fld using the rules
@@ -83,11 +85,13 @@ func (e *enum) Verify(fld *gen.Field) error {
 			ErrEnumFieldsNotAnnotated, fld.Name, len(fld.Enums), len(e.Options))
 	}
 	pbNames := make(map[string]struct{}, len(fld.Enums)+1)
+	pbNums := make(map[int32]string, len(fld.Enums))
 	if !fld.Default {
 		pbNames[unspecifiedEnumValueName(fld)] = struct{}{}
 	}
 	for _, opt := range fld.Enums {
-		if _, ok := e.Options[opt.Value]; !ok {
+		num, ok := e.Options[opt.Value]
+		if !ok {
 			return fmt.Errorf("entproto: value %q of enum field %q is not numbered by its entproto.Enum annotation",
 				opt.Value, fld.Name)
 		}
@@ -97,17 +101,22 @@ func (e *enum) Verify(fld *gen.Field) error {
 				opt.Value, fld.Name, pbName)
 		}
 		pbNames[pbName] = struct{}{}
+		if prev, dup := pbNums[num]; dup {
+			return fmt.Errorf("entproto: value %q of enum field %q maps to protobuf enum number %d, which is already used by %q",
+				opt.Value, fld.Name, num, prev)
+		}
+		pbNums[num] = opt.Value
 	}
 
 	// A default value must map to number 0; without one, 0 is reserved for the
 	// generated <FIELD>_UNSPECIFIED value.
-	zeroValue := e.findByNumber(0)
+	zeroValue, hasZero := e.findByNumber(0)
 	if fld.Default {
 		dv, ok := fld.DefaultValue().(string)
 		if !ok {
 			return fmt.Errorf("entproto: default value of enum field %q should be a string", fld.Name)
 		}
-		if zeroValue == "" {
+		if !hasZero {
 			return fmt.Errorf("entproto: enum field %q has a default value but"+
 				" its entproto.Enum annotation doesn't number any value 0", fld.Name)
 		}
@@ -116,7 +125,7 @@ func (e *enum) Verify(fld *gen.Field) error {
 				"entproto: default value of enum field %q is %q, but its entproto.Enum annotation numbers %q as 0",
 				fld.Name, dv, zeroValue)
 		}
-	} else if zeroValue != "" {
+	} else if hasZero {
 		return fmt.Errorf("entproto: enum field %q has no default value but"+
 			" its entproto.Enum annotation numbers %q as 0", fld.Name, zeroValue)
 	}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **multi-module Go monorepo** that extends [ent](https://entgo.io) ORM with Protocol Buffers (protobuf) support. Each top-level directory (`entproto`, `entconv`, `entcrud`) is an **independent Go module** with its own `go.mod`. `entconv` depends on `entproto` via a `replace` directive pointing at `../entproto`.
+This is a **multi-module Go monorepo** that extends [ent](https://entgo.io) ORM with Protocol Buffers (protobuf) support. Each top-level library directory (`entproto`, `entconv`, `entcrud`) — as well as `testdata` and the repository root — is an **independent Go module** with its own `go.mod`. `entconv` depends on `entproto` via a `replace` directive pointing at `../entproto`.
 
 ## Modules
 
@@ -41,16 +41,18 @@ make verify
 cd entproto && go test -run TestAdapter ./...
 ```
 
-The `testdata` module has its own Makefile with `init` (installs `buf` + `protoc-gen-go` at pinned versions), `clean`, `generate`, `verify`, `test`. `make test` at the repo root delegates to `testdata/Makefile generate` then `verify`.
+The `testdata` module has its own Makefile with `init` (installs `buf` + `protoc-gen-go` at pinned versions), `deps-update`, `clean`, `generate`, `verify`, `test`, and `update-golden`. `make test` at the repo root delegates to `testdata/Makefile generate` then `verify`.
 
 ## Module Versioning
 
 Each module is tagged independently using Go's subpath tag convention (`entproto/v0.0.1`, etc.):
 
 ```bash
-make tag-all TAG=v0.0.1   # creates v0.0.1 + entproto/v0.0.1 + entconv/v0.0.1 + entcrud/v0.0.1
+make tag-all TAG=v0.0.1   # creates and pushes v0.0.1 + entproto/v0.0.1 + entconv/v0.0.1 + entcrud/v0.0.1
 make tag-delete TAG=v0.0.1
 ```
+
+`make tag` and `make tag-all` check local and `origin` refs and abort if any tag already exists; overwriting is allowed only with `FORCE=1` when `TAG` contains a `-` pre-release suffix.
 
 ## Architecture
 
@@ -73,15 +75,15 @@ When debugging a generator change, run only the relevant step from `testdata/` r
 - `adapter.go` — translates `gen.Type` (Ent's intermediate representation) into `protoreflect`/`descriptorpb` structures.
 - `message.go`, `field.go`, `enum.go` — the `entproto.Message()`, `entproto.Field()`, `entproto.Enum()` schema annotations.
 - `fix.go` — post-processes generated `.proto` files (e.g. proto3 `optional` keyword handling, which protoreflect doesn't emit natively).
-- `WithAutoFill()` injects annotations for schemas/fields that lack them: ID → field 1, others numbered from 2.
+- `WithAutoFill()` injects annotations for schemas/fields that lack them: ID → field 1, other fields and edges → deterministic FNV-1a hash-derived numbers in the valid protobuf range (leaving `SkipGen()` schemas untouched and marking unannotated edges to `SkipGen()` schemas as `Skip()`).
 
 ### entconv
 
 - Pure code generator (no `entc.Extension` integration).
-- Entry point: `entconv.GenerateConverterFile(opts *Options)` in `conv.go`.
-- `internal/generator` — parses the `.pb.go` file with `go/ast`/`golang.org/x/tools/go/packages` and walks Ent schema files to align field types.
+- Entry point: `entconv.GenerateConverterFile(opts *Options)` in `conv.go` (supports `WithAutoFill()` via `Options.AutoFill` and skips `entproto.SkipGen()` schemas).
+- `internal/generator` — parses the `.pb.go` file with `go/ast` and walks Ent schema files to align field types.
 - `internal/generator/template/converter.tmpl` — the Go template that emits the converter.
-- Handles protobuf `int64` Unix seconds ↔ `time.Time`, enum mapping, and optional pointer fields.
+- Handles protobuf `int64` Unix seconds ↔ `time.Time`, enum mapping, matching JSON slice/`[]byte` fields, external `MessageField`/`EnumField` types, and optional pointer fields.
 
 ### entcrud
 

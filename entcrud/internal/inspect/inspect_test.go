@@ -136,3 +136,105 @@ func TestDeduplicateImports(t *testing.T) {
 		t.Errorf("Expected alias to be removed when equals path, got %+v", result2)
 	}
 }
+
+func TestDeduplicateImports_V2HyphenAndCollisions(t *testing.T) {
+	imports := []Import{
+		{Path: "example.com/api/user/v2", Alias: "v2"},
+		{Path: "example.com/api/item/v2", Alias: "item"},
+		{Path: "example.com/my-pkg", Alias: "my_pkg"},
+		{Path: "example.com/a/user", Alias: "user"},
+		{Path: "example.com/b/user", Alias: "user"},
+		{Path: "example.com/a/user", Alias: ""},
+	}
+	got := DeduplicateImports(imports)
+	if len(got) != 5 {
+		t.Fatalf("len = %d, want 5; got=%+v", len(got), got)
+	}
+	byPath := make(map[string]Import, len(got))
+	usedIdents := make(map[string]string, len(got))
+	for _, imp := range got {
+		byPath[imp.Path] = imp
+		ident := imp.Alias
+		if ident == "" {
+			ident = fallbackPackageName(imp.Path)
+		}
+		if prev, dup := usedIdents[ident]; dup {
+			t.Fatalf("duplicate effective identifier %q for %q and %q: %+v", ident, prev, imp.Path, got)
+		}
+		usedIdents[ident] = imp.Path
+	}
+	if byPath["example.com/api/user/v2"].Alias != "v2" {
+		t.Fatalf("expected /v2 alias to be kept, got %+v", byPath["example.com/api/user/v2"])
+	}
+	if byPath["example.com/api/item/v2"].Alias != "item" {
+		t.Fatalf("expected item alias on /v2 path to be kept, got %+v", byPath["example.com/api/item/v2"])
+	}
+	if byPath["example.com/my-pkg"].Alias != "my_pkg" {
+		t.Fatalf("expected sanitized alias on hyphenated path, got %+v", byPath["example.com/my-pkg"])
+	}
+	if byPath["example.com/b/user"].Alias != "user2" {
+		t.Fatalf("expected colliding user package to be disambiguated to user2, got %+v", byPath["example.com/b/user"])
+	}
+}
+
+func TestGetFuncInfo_AndFallbacks(t *testing.T) {
+	info := GetFuncInfo(TestGetFuncInfo_AndFallbacks)
+	if info.Package != "inspect" || info.Name != "TestGetFuncInfo_AndFallbacks" {
+		t.Fatalf("unexpected GetFuncInfo: %+v", info)
+	}
+	if !strings.HasSuffix(info.ImportPath, "/entcrud/internal/inspect") {
+		t.Fatalf("unexpected ImportPath: %+v", info)
+	}
+
+	p, sym, ok := splitFuncFullName("example.com/my-pkg/v2.Convert")
+	if !ok || p != "example.com/my-pkg/v2" || sym != "Convert" {
+		t.Fatalf("splitFuncFullName(/v2) = (%q, %q, %v)", p, sym, ok)
+	}
+	p, sym, ok = splitFuncFullName("gopkg.in/foo%2ev2.Convert")
+	if !ok || p != "gopkg.in/foo.v2" || sym != "Convert" {
+		t.Fatalf("splitFuncFullName(escaped) = (%q, %q, %v)", p, sym, ok)
+	}
+	p, sym, ok = splitFuncFullName("example.com/pkg.Convert[example.com/other/sub.T]")
+	if !ok || p != "example.com/pkg" || sym != "Convert[example.com/other/sub.T]" {
+		t.Fatalf("splitFuncFullName(generic) = (%q, %q, %v)", p, sym, ok)
+	}
+
+	if got := fallbackPackageName("example.com/my-conv/v2"); got != "my_conv" {
+		t.Fatalf("fallbackPackageName(/my-conv/v2) = %q, want my_conv", got)
+	}
+	if got := fallbackPackageName("example.com/pkg/v12"); got != "pkg" {
+		t.Fatalf("fallbackPackageName(/pkg/v12) = %q, want pkg", got)
+	}
+	if got := fallbackPackageName("gopkg.in/yaml.v3"); got != "yaml" {
+		t.Fatalf("fallbackPackageName(yaml.v3) = %q, want yaml", got)
+	}
+}
+
+func TestGenerateTypeConversionExprWithAlias(t *testing.T) {
+	type ptrTarget struct {
+		Count *int32
+		Meta  *strings.Builder
+	}
+	countFld, _ := reflect.TypeFor[ptrTarget]().FieldByName("Count")
+	if got := GenerateTypeConversionExprWithAlias(countFld, reflect.TypeFor[int](), ""); got != "int(*target.Count)" {
+		t.Fatalf("ptr->val expr = %q, want int(*target.Count)", got)
+	}
+
+	metaFld, _ := reflect.TypeFor[ptrTarget]().FieldByName("Meta")
+	if got := GenerateTypeConversionExprWithAlias(metaFld, reflect.TypeFor[*strings.Builder](), "str2"); got != "*str2.Builder(target.Meta)" {
+		t.Fatalf("ptr->ptr expr with alias = %q, want *str2.Builder(target.Meta)", got)
+	}
+}
+
+func TestImportResolver_ReservesLocalsAndDisambiguates(t *testing.T) {
+	r := NewImportResolver("source", "target", "options", "option")
+	if got := r.Resolve("example.com/ent/option", "option"); got != "option2" {
+		t.Fatalf("expected reserved option to disambiguate to option2, got %q", got)
+	}
+	if got := r.Resolve("example.com/a/user", "user"); got != "user" {
+		t.Fatalf("expected user, got %q", got)
+	}
+	if got := r.Resolve("example.com/b/user", "user"); got != "user2" {
+		t.Fatalf("expected colliding user to become user2, got %q", got)
+	}
+}

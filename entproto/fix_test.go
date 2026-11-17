@@ -330,3 +330,50 @@ func TestFixGraphAndLoadAdapter_SchemasWithoutIDField(t *testing.T) {
 		t.Fatal("EdgeIDPbStructFieldDesc() must be nil for a composite-ID target")
 	}
 }
+
+func TestFixGraph_InvalidMessageAnnotationReturnsInvalidAnnotationError(t *testing.T) {
+	t.Run("node", func(t *testing.T) {
+		g := &gen.Graph{
+			Nodes: []*gen.Type{
+				{
+					Name:        "User",
+					Annotations: map[string]any{MessageAnnotation: map[string]any{"Generate": "yes"}},
+				},
+			},
+		}
+		err := FixGraph(g)
+		if !errors.Is(err, ErrInvalidAnnotation) {
+			t.Fatalf("expected ErrInvalidAnnotation, got %v", err)
+		}
+		var invalid *InvalidAnnotationError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("expected *InvalidAnnotationError, got %T", err)
+		}
+		if invalid.Schema != "User" || invalid.Annotation != MessageAnnotation || invalid.Field != "" || invalid.Edge != "" {
+			t.Fatalf("unexpected InvalidAnnotationError: %+v", invalid)
+		}
+	})
+
+	t.Run("edge target", func(t *testing.T) {
+		target := &gen.Type{
+			Name:        "Target",
+			Annotations: map[string]any{MessageAnnotation: map[string]any{"Generate": "yes"}},
+		}
+		user := &gen.Type{
+			Name:  "User",
+			Edges: []*gen.Edge{{Name: "target", Type: target}},
+		}
+		g := &gen.Graph{Nodes: []*gen.Type{user, target}}
+		err := FixGraph(g)
+		if !errors.Is(err, ErrInvalidAnnotation) {
+			t.Fatalf("expected ErrInvalidAnnotation, got %v", err)
+		}
+		var invalid *InvalidAnnotationError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("expected *InvalidAnnotationError, got %T", err)
+		}
+		if invalid.Schema != "Target" || invalid.Annotation != MessageAnnotation {
+			t.Fatalf("unexpected InvalidAnnotationError: %+v", invalid)
+		}
+	})
+}

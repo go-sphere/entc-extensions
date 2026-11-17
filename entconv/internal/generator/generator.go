@@ -7,12 +7,12 @@ import (
 	"embed"
 	"fmt"
 	"go/format"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -97,7 +97,7 @@ func New(entPackage, pkg, pkgPath, protoAlias string, types []TypeInfo, adapter 
 var templates embed.FS
 
 // getTemplate parses a template bound to the current generator's function map.
-func (g *Generator) getTemplate() (*gen.Template, error) {
+func (g *Generator) getTemplate(plan *importPlan) (*gen.Template, error) {
 	templateSourceOnce.Do(func() {
 		tmplContent, err := fs.ReadFile(templates, "template/converter.tmpl")
 		if err != nil {
@@ -112,7 +112,7 @@ func (g *Generator) getTemplate() (*gen.Template, error) {
 	}
 
 	tmpl, err := gen.NewTemplate("converter").
-		Funcs(g.templateFuncs()).
+		Funcs(g.templateFuncs(plan)).
 		Parse(templateSource)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
@@ -206,7 +206,6 @@ func (g *Generator) GenerateToWriter(w io.Writer) error {
 
 // generateSingleType generates converter code for a single type.
 func (g *Generator) generateSingleType(w io.Writer, typeInfo TypeInfo) error {
-	// Create a temporary generator with only one type
 	tempGen := &Generator{
 		EntPackage:       g.EntPackage,
 		ConvPackage:      g.ConvPackage,
@@ -218,34 +217,23 @@ func (g *Generator) generateSingleType(w io.Writer, typeInfo TypeInfo) error {
 		nodeIndex:        g.nodeIndex,
 		typeIndex:        g.typeIndex,
 	}
-
-	tmpl, err := tempGen.getTemplate()
-	if err != nil {
-		return err
-	}
-
-	// Write header with imports
-	if err := tempGen.writeImports(w); err != nil {
-		return err
-	}
-
-	// Execute template
-	if err := tmpl.Execute(w, tempGen); err != nil {
-		return fmt.Errorf("template execution failed: %w", err)
-	}
-
-	return nil
+	return tempGen.generateBody(w)
 }
 
 // generateBody generates the converter code body (with imports) to the writer.
 func (g *Generator) generateBody(w io.Writer) error {
-	tmpl, err := g.getTemplate()
+	plan, err := g.buildImportPlan()
+	if err != nil {
+		return err
+	}
+
+	tmpl, err := g.getTemplate(plan)
 	if err != nil {
 		return err
 	}
 
 	// Write header with imports
-	if err := g.writeImports(w); err != nil {
+	if err := g.writeImportsFromPlan(w, plan); err != nil {
 		return err
 	}
 
@@ -257,66 +245,191 @@ func (g *Generator) generateBody(w io.Writer) error {
 	return nil
 }
 
-// Imports returns the list of imports needed by the generated code.
-func (g *Generator) Imports() ([]string, error) {
-	imp := []string{}
-	seen := make(map[string]struct{})
+type importSpec struct {
+	Alias string
+	Path  string
+}
 
-	// Add ent import
-	imp = append(imp, fmt.Sprintf(`ent "%s"`, g.EntPackage))
+type importPlan struct {
+	specs       []importSpec
+	used        map[string]struct{}
+	byPath      map[string]string
+	entAlias    string
+	protoAlias  string
+	enumAliases map[string]string
+	localVars   map[string]map[string]string
+}
 
-	// Add proto package import if ProtoPackagePath is specified (for separate package generation)
-	if g.ProtoPackagePath != "" && g.ProtoAlias != "" {
-		imp = append(imp, fmt.Sprintf(`%s "%s"`, g.ProtoAlias, g.ProtoPackagePath))
+func (p *importPlan) add(pkgPath, preferredAlias string, emitAlias bool) string {
+	if pkgPath == "" {
+		return ""
+	}
+	if alias, ok := p.byPath[pkgPath]; ok {
+		return alias
+	}
+	base := sanitizePkgAlias(preferredAlias, pkgPath)
+	alias := base
+	for i := 2; ; i++ {
+		if _, exists := p.used[alias]; !exists {
+			break
+		}
+		alias = fmt.Sprintf("%s%d", base, i)
+	}
+	p.used[alias] = struct{}{}
+	p.byPath[pkgPath] = alias
+	specAlias := ""
+	if emitAlias || alias != path.Base(pkgPath) {
+		specAlias = alias
+	}
+	p.specs = append(p.specs, importSpec{Alias: specAlias, Path: pkgPath})
+	return alias
+}
+
+func sanitizePkgAlias(preferred, pkgPath string) string {
+	candidate := preferred
+	if candidate == "" {
+		candidate = path.Base(pkgPath)
+	}
+	var b strings.Builder
+	for i, r := range candidate {
+		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+		isDigit := r >= '0' && r <= '9'
+		switch {
+		case isLetter || (i > 0 && isDigit):
+			b.WriteRune(r)
+		case i == 0 && isDigit:
+			b.WriteByte('_')
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	alias := b.String()
+	if alias == "" || alias == "_" || token.Lookup(alias).IsKeyword() {
+		return "pkg_" + alias
+	}
+	return alias
+}
+
+func (g *Generator) buildImportPlan() (*importPlan, error) {
+	plan := &importPlan{
+		used: map[string]struct{}{
+			// Reserve parameter/result names used in generated ToProto*/ToEnt* functions.
+			"e": {},
+			"v": {},
+		},
+		byPath:      make(map[string]string),
+		enumAliases: make(map[string]string),
+		localVars:   make(map[string]map[string]string, len(g.Types)),
 	}
 
-	// Ent enum types live in the generated subpackage for their schema.
+	fieldMaps := make(map[string]entproto.FieldMap, len(g.Types))
+	usesTime := false
 	for _, t := range g.Types {
 		fieldMap, err := g.Adapter.FieldMap(t.Type.Name)
 		if err != nil {
 			return nil, fmt.Errorf("resolving field map for %s while collecting imports: %w", t.Type.Name, err)
 		}
+		fieldMaps[t.Type.Name] = fieldMap
+		for _, f := range fieldMap.Fields() {
+			if f.EntField != nil && f.EntField.IsTime() {
+				usesTime = true
+			}
+		}
+	}
+
+	if usesTime {
+		plan.add("time", "time", false)
+	}
+	plan.entAlias = plan.add(g.EntPackage, "ent", true)
+	if g.ProtoPackagePath != "" && g.ProtoAlias != "" {
+		plan.protoAlias = plan.add(g.ProtoPackagePath, g.ProtoAlias, true)
+	}
+
+	for _, t := range g.Types {
+		fieldMap := fieldMaps[t.Type.Name]
 		// Named basic Go types (type Role string) are converted by name, so
 		// their package must be imported; goimports drops it when unused.
 		for _, f := range fieldMap.Fields() {
+			if f.EntField == nil || f.EntField.Type == nil {
+				continue
+			}
 			ti := f.EntField.Type
-			if !f.EntField.HasGoType() || ti.PkgPath == "" || ti.PkgName == "" {
+			if !f.EntField.HasGoType() || ti.PkgPath == "" {
 				continue
 			}
-			if _, ok := seen[ti.PkgPath]; ok {
-				continue
+			preferred := ti.PkgName
+			if preferred == "" {
+				preferred = path.Base(ti.PkgPath)
 			}
-			seen[ti.PkgPath] = struct{}{}
-			imp = append(imp, fmt.Sprintf(`%s "%s"`, ti.PkgName, ti.PkgPath))
+			plan.add(ti.PkgPath, preferred, ti.PkgPath != "time")
 		}
 		for _, f := range fieldMap.Enums() {
 			if !f.IsEntEnum() {
 				continue
 			}
-			enumPkg, err := g.entEnumPkg(t.Type.Name)
-			if err != nil {
-				return nil, fmt.Errorf("resolving enum package for %s while collecting imports: %w", t.Type.Name, err)
-			}
-			if enumPkg != g.EntPackage {
-				if _, ok := seen[enumPkg]; ok {
-					continue
-				}
-				seen[enumPkg] = struct{}{}
-				imp = append(imp, fmt.Sprintf(`%s "%s"`, path.Base(enumPkg), enumPkg))
-			}
+			enumPkg := g.entEnumPkgPath(t.Type.Name)
+			plan.enumAliases[t.Type.Name] = plan.add(enumPkg, g.entEnumPreferredAlias(t.Type.Name), true)
 		}
 	}
 
+	for _, t := range g.Types {
+		fieldMap := fieldMaps[t.Type.Name]
+		taken := make(map[string]struct{}, len(plan.used)+len(fieldMap)+4)
+		for k := range plan.used {
+			taken[k] = struct{}{}
+		}
+		taken["ent"] = struct{}{}
+		taken["time"] = struct{}{}
+		taken["nil"] = struct{}{}
+		taken["true"] = struct{}{}
+		taken["false"] = struct{}{}
+
+		vars := make(map[string]string, len(fieldMap))
+		for _, f := range fieldMap.Fields() {
+			if f.EntField == nil {
+				continue
+			}
+			base := f.EntField.BuilderField()
+			name := base
+			if _, used := taken[name]; used || token.Lookup(name).IsKeyword() {
+				prefix := "field_" + base
+				name = prefix
+				for i := 2; ; i++ {
+					if _, used := taken[name]; !used && !token.Lookup(name).IsKeyword() {
+						break
+					}
+					name = fmt.Sprintf("%s%d", prefix, i)
+				}
+			}
+			taken[name] = struct{}{}
+			vars[f.EntField.Name] = name
+		}
+		plan.localVars[t.Type.Name] = vars
+	}
+
+	return plan, nil
+}
+
+// Imports returns the list of imports needed by the generated code.
+func (g *Generator) Imports() ([]string, error) {
+	plan, err := g.buildImportPlan()
+	if err != nil {
+		return nil, err
+	}
+	imp := make([]string, 0, len(plan.specs))
+	for _, s := range plan.specs {
+		if s.Alias == "" {
+			imp = append(imp, fmt.Sprintf(`"%s"`, s.Path))
+		} else {
+			imp = append(imp, fmt.Sprintf(`%s "%s"`, s.Alias, s.Path))
+		}
+	}
 	return imp, nil
 }
 
-// writeImports writes the import block to the output.
-func (g *Generator) writeImports(w io.Writer) error {
-	imports, err := g.Imports()
-	if err != nil {
-		return err
-	}
-
+// writeImportsFromPlan writes the import block from a resolved import plan.
+func (g *Generator) writeImportsFromPlan(w io.Writer, plan *importPlan) error {
 	if _, err := w.Write([]byte(generatedHeader + "\n")); err != nil {
 		return err
 	}
@@ -326,8 +439,14 @@ func (g *Generator) writeImports(w io.Writer) error {
 	if _, err := w.Write([]byte("import (\n")); err != nil {
 		return err
 	}
-	for _, imp := range imports {
-		if _, err := w.Write([]byte("\t" + imp + "\n")); err != nil {
+	for _, s := range plan.specs {
+		var line string
+		if s.Alias == "" {
+			line = fmt.Sprintf("\t%q\n", s.Path)
+		} else {
+			line = fmt.Sprintf("\t%s %q\n", s.Alias, s.Path)
+		}
+		if _, err := w.Write([]byte(line)); err != nil {
 			return err
 		}
 	}
@@ -341,25 +460,66 @@ func (g *Generator) FieldMap(typeName string) (entproto.FieldMap, error) {
 	return g.Adapter.FieldMap(typeName)
 }
 
-func (g *Generator) templateFuncs() template.FuncMap {
+func (g *Generator) templateFuncs(plan *importPlan) template.FuncMap {
 	return template.FuncMap{
 		"ident":           g.ident,
 		"entIdent":        g.entIdent,
-		"entEnumPkg":      g.entEnumPkg,
+		"entEnumAlias":    func(typeName string) string { return g.entEnumAlias(plan, typeName) },
 		"newConverter":    g.newConverter,
-		"unquote":         strconv.Unquote,
-		"camel":           gen.Funcs["camel"],
+		"toEntConv":       func(conv *converter.Converter, fld *gen.Field) string { return rewriteToEntConversion(plan, conv, fld) },
+		"localVar":        func(typeName string, fld *gen.Field) string { return localFieldVar(plan, typeName, fld) },
 		"pascal":          gen.Funcs["pascal"],
-		"singular":        gen.Funcs["singular"],
-		"qualify":         g.qualify,
-		"statusErr":       g.statusErr,
-		"statusErrf":      g.statusErrf,
 		"getFieldMap":     g.getFieldMap,
-		"protoIdent":      g.protoIdent,
-		"entPackageIdent": g.entPackageIdent,
+		"protoIdent":      func(ident string) string { return protoIdentForPlan(plan, ident) },
+		"entPackageIdent": func(typeName string) string { return entPackageIdentForPlan(plan, typeName) },
 		"pbEnumConst":     pbEnumConst,
 		"entEnumConst":    entEnumConst,
 	}
+}
+
+func rewriteToEntConversion(plan *importPlan, conv *converter.Converter, fld *gen.Field) string {
+	expr := conv.ToEntConversion
+	if expr == "" || fld == nil || !fld.HasGoType() || fld.Type.PkgPath == "" {
+		return expr
+	}
+	alias := plan.byPath[fld.Type.PkgPath]
+	if alias == "" {
+		return expr
+	}
+	origPkg := fld.Type.PkgName
+	if origPkg == "" {
+		origPkg = path.Base(fld.Type.PkgPath)
+	}
+	if alias == origPkg {
+		return expr
+	}
+	prefix := ""
+	rest := expr
+	for strings.HasPrefix(rest, "[]") || strings.HasPrefix(rest, "*") {
+		if strings.HasPrefix(rest, "[]") {
+			prefix += "[]"
+			rest = rest[2:]
+		} else {
+			prefix += "*"
+			rest = rest[1:]
+		}
+	}
+	if after, ok := strings.CutPrefix(rest, origPkg+"."); ok {
+		return prefix + alias + "." + after
+	}
+	return expr
+}
+
+func localFieldVar(plan *importPlan, typeName string, fld *gen.Field) string {
+	if fld == nil {
+		return ""
+	}
+	if vars := plan.localVars[typeName]; vars != nil {
+		if v, ok := vars[fld.Name]; ok {
+			return v
+		}
+	}
+	return fld.BuilderField()
 }
 
 // pbEnumConst resolves the protoc-gen-go constant name for an ent enum value
@@ -378,46 +538,50 @@ func (g *Generator) ident(qualifiedIdent string) string {
 	return qualifiedIdent
 }
 
-func (g *Generator) qualify(pkg, ident string) string {
-	return pkg + "." + ident
-}
-
-func (g *Generator) statusErr(code, msg string) string {
-	return fmt.Sprintf("status.Error(codes.%s, %q)", code, msg)
-}
-
-func (g *Generator) statusErrf(code, format string, args ...string) string {
-	return fmt.Sprintf("status.Errorf(codes.%s, %s, %s)", code, strconv.Quote(format), strings.Join(args, ","))
-}
-
 func (g *Generator) getFieldMap(typeName string) (entproto.FieldMap, error) {
 	return g.Adapter.FieldMap(typeName)
 }
 
-func (g *Generator) entIdent(subpath string, ident string) string {
-	if subpath == "" {
+func (g *Generator) entIdent(pkgAlias, ident string) string {
+	if pkgAlias == "" {
 		return "ent." + ident
 	}
-	pkgName := path.Base(subpath)
-	return pkgName + "." + ident
+	return pkgAlias + "." + ident
 }
 
-func (g *Generator) protoIdent(ident string) string {
-	if g.ProtoAlias != "" {
-		return g.ProtoAlias + "." + ident
+func protoIdentForPlan(plan *importPlan, ident string) string {
+	if plan.protoAlias != "" {
+		return plan.protoAlias + "." + ident
 	}
 	return ident
 }
 
-func (g *Generator) entPackageIdent(typeName string) string {
+func entPackageIdentForPlan(plan *importPlan, typeName string) string {
+	if plan.entAlias != "" {
+		return plan.entAlias + "." + typeName
+	}
 	return "ent." + typeName
 }
 
-func (g *Generator) entEnumPkg(typeName string) (string, error) {
-	if _, ok := g.nodeIndex[typeName]; ok {
-		return path.Join(g.EntPackage, strings.ToLower(typeName)), nil
+func (g *Generator) entEnumPkgPath(typeName string) string {
+	if node, ok := g.nodeIndex[typeName]; ok {
+		return path.Join(g.EntPackage, node.PackageDir())
 	}
-	return g.EntPackage, nil
+	return g.EntPackage
+}
+
+func (g *Generator) entEnumPreferredAlias(typeName string) string {
+	if node, ok := g.nodeIndex[typeName]; ok {
+		return node.Package()
+	}
+	return "ent"
+}
+
+func (g *Generator) entEnumAlias(plan *importPlan, typeName string) string {
+	if alias := plan.enumAliases[typeName]; alias != "" {
+		return alias
+	}
+	return g.entEnumPreferredAlias(typeName)
 }
 
 func (g *Generator) newConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*converter.Converter, error) {

@@ -181,3 +181,33 @@ func TestStructIDType_ScansAllGoFiles(t *testing.T) {
 		t.Fatalf("structIDType = (%q, %v), want (int64, true)", typ, ok)
 	}
 }
+
+func TestVerifyIDTypesAgainstSource_MultiEntitySingleScan(t *testing.T) {
+	root := t.TempDir()
+	schemaDir := filepath.Join(root, "schema")
+	entDir := filepath.Join(root, "ent")
+	if err := os.MkdirAll(schemaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "user.go"), []byte("package ent\n\ntype User struct {\n\tID int64\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "post.go"), []byte("package ent\n\ntype Post struct {\n\tID int\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &gen.Graph{Nodes: []*gen.Type{
+		{Name: "User", ID: &gen.Field{Type: &field.TypeInfo{Type: field.TypeInt64}}},
+		{Name: "Post", ID: &gen.Field{Type: &field.TypeInfo{Type: field.TypeInt64}}},
+	}}
+	err := verifyIDTypesAgainstSource(g, schemaDir, "")
+	var mismatch *IDTypeMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected *IDTypeMismatchError, got %T (%v)", err, err)
+	}
+	if mismatch.Entity != "Post" || mismatch.ActualType != "int" || mismatch.ExpectedType != "int64" {
+		t.Fatalf("mismatch = %+v, want Post int<-int64", mismatch)
+	}
+}

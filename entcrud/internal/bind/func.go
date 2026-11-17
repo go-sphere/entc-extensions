@@ -31,7 +31,7 @@ func getBindTemplate() (*template.Template, error) {
 		bindTemplate, bindTemplateErr = template.New("bind").Funcs(template.FuncMap{
 			"GenZeroCheck":          inspect.GenerateZeroCheckExpr,
 			"GenNotZeroCheck":       inspect.GenerateNonZeroCheckExpr,
-			"GenTypeConversionExpr": inspect.GenerateTypeConversionExpr,
+			"GenTypeConversionExpr": inspect.GenerateTypeConversionExprWithAlias,
 			"ToSnakeCase":           strcase.ToSnake,
 		}).Parse(genBindFuncTemplate)
 	})
@@ -40,6 +40,12 @@ func getBindTemplate() (*template.Template, error) {
 
 // GenBindFunc generates Go code for binding functions.
 func GenBindFunc(action any, entityConf *conf.EntityConf, customConverters map[string]any, strictTypeCheck bool) (string, error) {
+	return GenBindFuncWithResolver(action, entityConf, customConverters, strictTypeCheck, nil)
+}
+
+// GenBindFuncWithResolver generates Go code for a binding function using
+// resolver to disambiguate package qualifiers across the generated file.
+func GenBindFuncWithResolver(action any, entityConf *conf.EntityConf, customConverters map[string]any, strictTypeCheck bool, resolver *inspect.ImportResolver) (string, error) {
 	actionName := inspect.TypeName(action)
 	sourceName := inspect.TypeName(entityConf.Source)
 	targetName := inspect.TypeName(entityConf.Target)
@@ -50,25 +56,41 @@ func GenBindFunc(action any, entityConf *conf.EntityConf, customConverters map[s
 	_, actionMethods := inspect.ExtractPublicMethods(action, strcase.ToSnake)
 
 	ignoreFields := normalizeIgnoredFields(entityConf.IgnoreFields)
-	table := strings.ToLower(sourceName)
+	subPkgAlias := strings.ToLower(sourceName)
+	if subPath := inspect.ExtractSubPackagePath(entityConf.Source); subPath != "" {
+		subPkgAlias = resolver.AliasFor(subPath, subPkgAlias)
+	}
 	fields, mismatches := buildFieldContexts(
 		keys,
 		sourceFields,
 		targetFields,
 		actionMethods,
-		table,
+		subPkgAlias,
 		ignoreFields,
 		customConverters,
 		strictTypeCheck,
 		sourceName,
+		resolver,
 	)
 	if len(mismatches) > 0 {
 		return "", &conf.TypeMismatchListError{Items: mismatches}
 	}
 
+	sourcePkgName := inspect.ExtractPackageName(action)
+	if sourcePkgName == "" {
+		sourcePkgName = "ent"
+	}
+	if actionPath := inspect.ExtractPackagePath(action); actionPath != "" {
+		sourcePkgName = resolver.AliasFor(actionPath, sourcePkgName)
+	}
+	targetPkgName := inspect.ExtractPackageName(entityConf.Target)
+	if targetPath := inspect.ExtractPackagePath(entityConf.Target); targetPath != "" {
+		targetPkgName = resolver.AliasFor(targetPath, targetPkgName)
+	}
+
 	context := bindContext{
-		SourcePkgName: "ent",                                         // Source uses ent package (e.g., ent.ExampleCreate)
-		TargetPkgName: inspect.ExtractPackageName(entityConf.Target), // Target uses entpb package
+		SourcePkgName: sourcePkgName,
+		TargetPkgName: targetPkgName,
 
 		ActionName: actionName,
 		SourceName: sourceName,
@@ -123,6 +145,7 @@ func buildFieldContexts(
 	customConverters map[string]any,
 	strictTypeCheck bool,
 	entityName string,
+	resolver *inspect.ImportResolver,
 ) ([]fieldContext, []conf.TypeMismatchError) {
 	fields := make([]fieldContext, 0, len(keys))
 	mismatches := make([]conf.TypeMismatchError, 0)
@@ -139,7 +162,7 @@ func buildFieldContexts(
 			continue
 		}
 
-		field, ok, mismatch := buildFieldContext(key, sourceField, targetField, actionMethods, table, customConverters, entityName)
+		field, ok, mismatch := buildFieldContext(key, sourceField, targetField, actionMethods, table, customConverters, entityName, resolver)
 		if !ok {
 			continue
 		}
@@ -162,6 +185,7 @@ func buildFieldContext(
 	table string,
 	customConverters map[string]any,
 	entityName string,
+	resolver *inspect.ImportResolver,
 ) (fieldContext, bool, *conf.TypeMismatchError) {
 	setter, hasSetter := actionMethods[strcase.ToSnake("Set"+sourceField.Name)]
 	if !hasSetter {
@@ -181,13 +205,16 @@ func buildFieldContext(
 	settNillable, hasSettNillable := actionMethods[strcase.ToSnake("SetNillable"+sourceField.Name)]
 	clearOnNil, hasClearOnNil := actionMethods[strcase.ToSnake("Clear"+sourceField.Name)]
 	targetFieldIsPtr := targetField.Type.Kind() == reflect.Pointer
+	setterArgIsPtr := setterArgType.Kind() == reflect.Pointer
+	derefTargetPtr := targetFieldIsPtr && !setterArgIsPtr
 
 	field := fieldContext{
 		FieldKeyPath: table + ".Field" + sourceField.Name,
 
-		TargetField:   targetField,
-		SourceField:   sourceField,
-		SetterArgType: setterArgType,
+		TargetField:       targetField,
+		SourceField:       sourceField,
+		SetterArgType:     setterArgType,
+		SetterArgPkgAlias: setterArgPkgAlias(setterArgType, resolver),
 
 		SetterFuncName:       setter.Name,
 		SettNillableFuncName: settNillable.Name,
@@ -196,26 +223,28 @@ func buildFieldContext(
 		CanSettNillable:  hasSettNillable,
 		CanClearOnNil:    hasClearOnNil,
 		TargetFieldIsPtr: targetFieldIsPtr,
+		DerefTargetPtr:   derefTargetPtr,
 	}
 
-	if targetFieldIsPtr {
+	if derefTargetPtr {
 		field.TargetSourceIsSomeType = targetField.Type.Elem().AssignableTo(setterArgType)
 	} else {
 		field.TargetSourceIsSomeType = targetField.Type.AssignableTo(setterArgType)
 	}
 
 	if converter, ok := customConverters[key]; ok {
-		info, mismatch := validateCustomConverter(converter, targetField.Type, setterArgType, entityName, sourceField.Name)
+		info, takesPtr, mismatch := validateCustomConverter(converter, targetField.Type, setterArgType, entityName, sourceField.Name, resolver)
 		if mismatch != nil {
 			return field, true, mismatch
 		}
 		field.HasCustomConverter = true
 		field.CustomConverter = info
+		field.CustomConverterTakesPtr = takesPtr
 		return field, true, nil
 	}
 
 	targetValueType := targetField.Type
-	if targetFieldIsPtr {
+	if derefTargetPtr {
 		targetValueType = targetValueType.Elem()
 	}
 	// Go allows int → string conversions, but they yield the rune for that code
@@ -235,6 +264,19 @@ func buildFieldContext(
 	return field, true, nil
 }
 
+func setterArgPkgAlias(arg reflect.Type, resolver *inspect.ImportResolver) string {
+	if resolver == nil {
+		return ""
+	}
+	for arg.Kind() == reflect.Pointer || arg.Kind() == reflect.Slice {
+		arg = arg.Elem()
+	}
+	if arg.PkgPath() == "" {
+		return ""
+	}
+	return resolver.AliasFor(arg.PkgPath(), "")
+}
+
 func isIntegerKind(k reflect.Kind) bool {
 	return reflect.Int <= k && k <= reflect.Uintptr
 }
@@ -252,21 +294,37 @@ func validateCustomConverter(
 	setterArgType reflect.Type,
 	entityName string,
 	fieldName string,
-) (inspect.FuncInfo, *conf.TypeMismatchError) {
+	resolver *inspect.ImportResolver,
+) (inspect.FuncInfo, bool, *conf.TypeMismatchError) {
 	converterType := reflect.TypeOf(converter)
 	info := inspect.GetFuncInfo(converter)
 	invalid := converterType == nil || converterType.Kind() != reflect.Func ||
 		converterType.NumIn() != 1 || converterType.NumOut() != 1 ||
 		info.ImportPath == "" || !token.IsIdentifier(info.Name) || !ast.IsExported(info.Name)
-	valueType := targetType
-	if valueType.Kind() == reflect.Pointer {
-		valueType = valueType.Elem()
-	}
+	var takesPtr bool
 	if !invalid {
-		invalid = !valueType.AssignableTo(converterType.In(0)) || !converterType.Out(0).AssignableTo(setterArgType)
+		in0 := converterType.In(0)
+		var matchIn bool
+		if targetType.Kind() == reflect.Pointer {
+			elem := targetType.Elem()
+			switch {
+			case in0.Kind() != reflect.Pointer && elem.AssignableTo(in0):
+				matchIn = true
+				takesPtr = false
+			case targetType.AssignableTo(in0):
+				matchIn = true
+				takesPtr = true
+			case elem.AssignableTo(in0):
+				matchIn = true
+				takesPtr = false
+			}
+		} else {
+			matchIn = targetType.AssignableTo(in0)
+		}
+		invalid = !matchIn || !converterType.Out(0).AssignableTo(setterArgType)
 	}
 	if invalid {
-		return inspect.FuncInfo{}, &conf.TypeMismatchError{
+		return inspect.FuncInfo{}, false, &conf.TypeMismatchError{
 			Entity:     entityName,
 			Field:      fieldName,
 			SourceType: setterArgType.String(),
@@ -274,7 +332,8 @@ func validateCustomConverter(
 			Suggestion: "custom converter must be an exported top-level func with one input matching the protobuf value and one output assignable to the Ent setter",
 		}
 	}
-	return info, nil
+	info.Package = resolver.AliasFor(info.ImportPath, info.Package)
+	return info, takesPtr, nil
 }
 
 type bindContext struct {
@@ -291,9 +350,10 @@ type bindContext struct {
 type fieldContext struct {
 	FieldKeyPath string
 
-	TargetField   reflect.StructField
-	SourceField   reflect.StructField
-	SetterArgType reflect.Type
+	TargetField       reflect.StructField
+	SourceField       reflect.StructField
+	SetterArgType     reflect.Type
+	SetterArgPkgAlias string
 
 	SetterFuncName       string
 	SettNillableFuncName string
@@ -303,8 +363,10 @@ type fieldContext struct {
 	CanClearOnNil   bool
 
 	TargetFieldIsPtr       bool
+	DerefTargetPtr         bool
 	TargetSourceIsSomeType bool
 
-	HasCustomConverter bool
-	CustomConverter    inspect.FuncInfo
+	HasCustomConverter      bool
+	CustomConverter         inspect.FuncInfo
+	CustomConverterTakesPtr bool
 }

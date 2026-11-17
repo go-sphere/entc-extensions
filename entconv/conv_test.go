@@ -10,6 +10,11 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"entgo.io/ent/entc/gen"
+	"github.com/go-sphere/entc-extensions/entconv/internal/generator"
+	"github.com/go-sphere/entc-extensions/entproto"
+	"github.com/jhump/protoreflect/desc/builder"
 )
 
 const (
@@ -236,8 +241,164 @@ func TestValidateOptions_RejectsInvalidIDType(t *testing.T) {
 }
 
 func TestProtoDescriptorGoName_NestedMessage(t *testing.T) {
-	if got := protoDescriptorGoName("google.protobuf.FieldOptions.FeatureSupport", "google.protobuf"); got != "FieldOptions_FeatureSupport" {
-		t.Fatalf("nested protobuf Go name = %q, want FieldOptions_FeatureSupport", got)
+	cases := []struct {
+		full, pkg, want string
+	}{
+		{"google.protobuf.FieldOptions.FeatureSupport", "google.protobuf", "FieldOptions_FeatureSupport"},
+		{"acme.v1.user_profile", "acme.v1", "UserProfile"},
+		{"acme.v1.outer_msg.InnerKind", "acme.v1", "OuterMsg_InnerKind"},
+		{"acme.v1.outer_msg.inner_kind", "acme.v1", "OuterMsgInnerKind"},
+		{".acme.v1.my_item", "acme.v1", "MyItem"},
+	}
+	for _, tc := range cases {
+		if got := protoDescriptorGoName(tc.full, tc.pkg); got != tc.want {
+			t.Fatalf("protoDescriptorGoName(%q, %q) = %q, want %q", tc.full, tc.pkg, got, tc.want)
+		}
+	}
+}
+
+func TestExpectedProtoGoType_RepeatedBytesAndWireTypes(t *testing.T) {
+	mb := builder.NewMessage("Wire").
+		AddField(builder.NewField("blobs", builder.FieldTypeBytes()).SetNumber(2).SetRepeated()).
+		AddField(builder.NewField("opt_blob", builder.FieldTypeBytes()).SetNumber(3).SetProto3Optional(true)).
+		AddField(builder.NewField("s32", builder.FieldTypeSInt32()).SetNumber(4)).
+		AddField(builder.NewField("s64", builder.FieldTypeSInt64()).SetNumber(5)).
+		AddField(builder.NewField("f32", builder.FieldTypeFixed32()).SetNumber(6)).
+		AddField(builder.NewField("f64", builder.FieldTypeFixed64()).SetNumber(7)).
+		AddField(builder.NewField("sf32", builder.FieldTypeSFixed32()).SetNumber(8)).
+		AddField(builder.NewField("sf64", builder.FieldTypeSFixed64()).SetNumber(9))
+	file, err := builder.NewFile("wire.proto").SetProto3(true).AddMessage(mb).Build()
+	if err != nil {
+		t.Fatalf("build descriptor: %v", err)
+	}
+	msg := file.FindMessage("Wire")
+	want := map[string]string{
+		"blobs":    "[][]byte",
+		"opt_blob": "[]byte",
+		"s32":      "int32",
+		"s64":      "int64",
+		"f32":      "uint32",
+		"f64":      "uint64",
+		"sf32":     "int32",
+		"sf64":     "int64",
+	}
+	for name, expected := range want {
+		got := expectedProtoGoType(&entproto.FieldMappingDescriptor{PbFieldDescriptor: msg.FindFieldByName(name)})
+		if got != expected {
+			t.Errorf("%s: expectedProtoGoType = %q, want %q", name, got, expected)
+		}
+	}
+}
+
+func TestParseProtoFile_TopLevelTypesAndConstsOnly(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "test.pb.go")
+	src := `package pb
+
+type User struct {
+	Id int64
+}
+
+const (
+	User_STATUS_OK = 1
+)
+
+var File_test_proto = "ignored"
+
+func helper() {
+	type localOnly struct {
+		X int
+	}
+	const localConst = 2
+	var _ = localOnly{X: localConst}
+}
+`
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := parseProtoFile(file)
+	if err != nil {
+		t.Fatalf("parseProtoFile: %v", err)
+	}
+	if _, ok := info.Messages["User"]; !ok {
+		t.Fatal("missing top-level message User")
+	}
+	if _, ok := info.Messages["localOnly"]; ok {
+		t.Fatal("function-local struct localOnly must not be collected")
+	}
+	if _, ok := info.Consts["User_STATUS_OK"]; !ok {
+		t.Fatal("missing top-level const User_STATUS_OK")
+	}
+	if _, ok := info.Consts["localConst"]; ok {
+		t.Fatal("function-local const localConst must not be collected")
+	}
+	if _, ok := info.Consts["File_test_proto"]; ok {
+		t.Fatal("top-level var File_test_proto must not be collected as const")
+	}
+}
+
+func TestMatchTypes_SkipsSkipGenSchemas(t *testing.T) {
+	g := &gen.Graph{
+		Nodes: []*gen.Type{
+			{Name: "User", Annotations: map[string]any{entproto.MessageAnnotation: entproto.Message()}},
+			{Name: "SkipDirect", Annotations: map[string]any{entproto.MessageAnnotation: entproto.SkipGen()}},
+			{Name: "SkipMap", Annotations: map[string]any{entproto.MessageAnnotation: map[string]any{"Generate": false}}},
+		},
+	}
+	protoMsgs := map[string]*generator.ProtoMessage{
+		"User": {Name: "User"},
+	}
+	matched, missing := matchTypes(g, protoMsgs)
+	if missing != nil {
+		t.Fatalf("expected SkipGen schemas to be skipped, got missing=%v", missing)
+	}
+	if len(matched) != 1 || matched[0].MessageName != "User" {
+		t.Fatalf("matched = %+v, want only User", matched)
+	}
+}
+
+func TestGenerateConverter_WithAutoFill(t *testing.T) {
+	fixtureDir := filepath.Join(moduleRoot(t), "testdata", "fixtures", "autofillschema")
+	pbFile := writeProtoFixture(t, "entpb", "Item", "Id int64\nTitle string")
+
+	baseOpts := func(autoFill bool) *Options {
+		opts := NewOptions(
+			WithSchemaPath(fixtureDir),
+			WithEntPackagePath(testEntPackagePath),
+			WithProtoFile(pbFile),
+			WithProtoPackagePath(testProtoPackagePath),
+			WithProtoAlias("entpb"),
+			WithOutDir(t.TempDir()),
+		)
+		opts.AutoFill = autoFill
+		return opts
+	}
+
+	// Without AutoFill, unannotated Item fails strict missing-proto / contract check
+	// (no message descriptor for Item).
+	if _, err := GenerateConverter(baseOpts(false)); err == nil {
+		t.Fatal("expected GenerateConverter without AutoFill to fail on unannotated schema")
+	}
+
+	// With AutoFill (via WithAutoFill()), Item gets auto-annotated and Hidden (SkipGen) is skipped.
+	opts := NewOptions(
+		WithSchemaPath(fixtureDir),
+		WithEntPackagePath(testEntPackagePath),
+		WithProtoFile(pbFile),
+		WithProtoPackagePath(testProtoPackagePath),
+		WithProtoAlias("entpb"),
+		WithOutDir(t.TempDir()),
+		WithAutoFill(),
+	)
+	code, err := GenerateConverter(opts)
+	if err != nil {
+		t.Fatalf("GenerateConverter with WithAutoFill failed: %v", err)
+	}
+	src := string(code)
+	if !strings.Contains(src, "func ToProtoItem(") || !strings.Contains(src, "func ToEntItem(") {
+		t.Fatalf("expected ToProtoItem/ToEntItem in generated output:\n%s", src)
+	}
+	if strings.Contains(src, "Hidden") {
+		t.Fatalf("SkipGen schema Hidden should not appear in generated output:\n%s", src)
 	}
 }
 

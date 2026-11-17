@@ -20,9 +20,9 @@ import (
 // edge schemas with a composite ID have no ID field to number.
 //
 // FixGraph stops at the first schema it cannot fix and returns an error: an
-// [*InvalidAnnotationError] for an undecodable Field annotation, or an error
-// when a derived number (or 1 for the ID) is already in use. Schemas processed
-// before the failure stay modified.
+// [*InvalidAnnotationError] for an undecodable Field or Message annotation, or
+// an error when a derived number (or 1 for the ID) is already in use. Schemas
+// processed before the failure stay modified.
 func FixGraph(g *gen.Graph) error {
 	for _, node := range g.Nodes {
 		if err := fixNode(node); err != nil {
@@ -39,7 +39,7 @@ func fixNode(node *gen.Type) error {
 	if node.Annotations[MessageAnnotation] != nil {
 		msg, err := extractMessageAnnotation(node)
 		if err != nil {
-			return err
+			return &InvalidAnnotationError{Schema: node.Name, Annotation: MessageAnnotation, Cause: err}
 		}
 		if !msg.Generate {
 			return nil
@@ -88,7 +88,7 @@ func addAnnotationForEdge(ed *gen.Edge, idGenerator *fieldIDGenerator) error {
 	if ed.Type.Annotations[MessageAnnotation] != nil {
 		target, err := extractMessageAnnotation(ed.Type)
 		if err != nil {
-			return err
+			return &InvalidAnnotationError{Schema: ed.Type.Name, Annotation: MessageAnnotation, Cause: err}
 		}
 		if !target.Generate {
 			ed.Annotations[SkipAnnotation] = Skip()

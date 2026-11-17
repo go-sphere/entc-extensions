@@ -43,14 +43,25 @@ type Converter struct {
 
 // NewConverter creates a Converter for the given field mapping and type name.
 func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Converter, error) {
+	if fld == nil || fld.PbFieldDescriptor == nil {
+		return nil, fmt.Errorf("entproto: missing field mapping descriptor")
+	}
 	out := &Converter{}
 	pbd := fld.PbFieldDescriptor
 	switch pbd.GetType() {
 	case dpb.FieldDescriptorProto_TYPE_BOOL, dpb.FieldDescriptorProto_TYPE_STRING,
-		dpb.FieldDescriptorProto_TYPE_BYTES, dpb.FieldDescriptorProto_TYPE_INT32,
-		dpb.FieldDescriptorProto_TYPE_INT64, dpb.FieldDescriptorProto_TYPE_UINT32,
-		dpb.FieldDescriptorProto_TYPE_UINT64, dpb.FieldDescriptorProto_TYPE_FLOAT,
-		dpb.FieldDescriptorProto_TYPE_DOUBLE:
+		dpb.FieldDescriptorProto_TYPE_BYTES,
+		dpb.FieldDescriptorProto_TYPE_INT32, dpb.FieldDescriptorProto_TYPE_SINT32, dpb.FieldDescriptorProto_TYPE_SFIXED32,
+		dpb.FieldDescriptorProto_TYPE_INT64, dpb.FieldDescriptorProto_TYPE_SINT64, dpb.FieldDescriptorProto_TYPE_SFIXED64,
+		dpb.FieldDescriptorProto_TYPE_UINT32, dpb.FieldDescriptorProto_TYPE_FIXED32,
+		dpb.FieldDescriptorProto_TYPE_UINT64, dpb.FieldDescriptorProto_TYPE_FIXED64,
+		dpb.FieldDescriptorProto_TYPE_FLOAT, dpb.FieldDescriptorProto_TYPE_DOUBLE:
+		if fld.EntField == nil {
+			return nil, fmt.Errorf("entproto: field %q has no ent field mapping", pbd.GetName())
+		}
+		if fld.EntField.IsJSON() {
+			return jsonConverter(pbd, fld.EntField)
+		}
 		if err := basicTypeConversion(fld.PbFieldDescriptor, fld.EntField, out); err != nil {
 			return nil, err
 		}
@@ -60,17 +71,24 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 			// GoType is the generated enum, so the conversion is identity.
 			return out, nil
 		}
-		enumName := fld.PbFieldDescriptor.GetEnumType().GetName()
-		method := fmt.Sprintf("ToProto%s_%s", typeName, enumName)
+		enumType := fld.PbFieldDescriptor.GetEnumType()
+		if enumType == nil {
+			return nil, fmt.Errorf("entproto: enum field %q has no enum descriptor", pbd.GetName())
+		}
+		method := fmt.Sprintf("ToProto%s_%s", typeName, enumType.GetName())
 		out.ToProtoConstructor = method
 	case dpb.FieldDescriptorProto_TYPE_MESSAGE:
 		switch {
 		case fld.IsEdgeField:
-			if fld.EntEdge.Type.ID == nil {
-				return nil, fmt.Errorf("entproto: edge %q targets %q, which has no single-field ID to convert",
-					fld.EntEdge.Name, fld.EntEdge.Type.Name)
+			if fld.EntEdge == nil || fld.EntEdge.Type == nil || fld.EntEdge.Type.ID == nil {
+				return nil, fmt.Errorf("entproto: edge %q has no single-field ID to convert", pbd.GetName())
 			}
-			if err := basicTypeConversion(fld.EdgeIDPbStructFieldDesc(), fld.EntEdge.Type.ID, out); err != nil {
+			edgeIDDesc := fld.EdgeIDPbStructFieldDesc()
+			if edgeIDDesc == nil {
+				return nil, fmt.Errorf("entproto: edge %q target %q has no protobuf ID field %q",
+					fld.EntEdge.Name, fld.EntEdge.Type.Name, fld.EntEdge.Type.ID.Name)
+			}
+			if err := basicTypeConversion(edgeIDDesc, fld.EntEdge.Type.ID, out); err != nil {
 				return nil, err
 			}
 		default:
@@ -88,19 +106,11 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 	if fld.IsEdgeField {
 		efld = fld.EntEdge.Type.ID
 	}
+	if efld == nil {
+		return nil, fmt.Errorf("entproto: field %q has no ent field mapping", pbd.GetName())
+	}
 
 	switch {
-	case fld.IsIDField || (fld.EntField != nil && strings.ToLower(fld.EntField.Name) == "id"):
-		// ID field - use the ent field type directly
-		// For ID fields, Type.Ident may be empty, so use Type.Type.String() instead
-		// e.g., "int", "int64", "uint", "string" for uuid
-		idType := ""
-		if efld.Type.Ident != "" {
-			idType = efld.Type.Ident
-		} else {
-			idType = efld.Type.Type.String()
-		}
-		out.ToEntConversion = idType
 	case implements(efld.Type.RType, binaryMarshallerUnmarshalerType) && efld.HasGoType():
 		// Ident returned from ent already has the packagename prefixed. Strip it since `g.QualifiedGoIdent`
 		// adds it back.
@@ -118,6 +128,17 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 		case efld.IsString():
 			out.ToEntScannerConversion = "string"
 		}
+	case fld.IsIDField || strings.ToLower(efld.Name) == "id":
+		// ID field - use the ent field type directly
+		// For ID fields, Type.Ident may be empty, so use Type.Type.String() instead
+		// e.g., "int", "int64", "uint", "string" for uuid
+		idType := ""
+		if efld.Type.Ident != "" {
+			idType = efld.Type.Ident
+		} else {
+			idType = efld.Type.Type.String()
+		}
+		out.ToEntConversion = idType
 	case efld.IsBool(), efld.IsBytes(), efld.IsString():
 		if efld.HasGoType() {
 			// A named basic type (type Role string) needs an explicit
@@ -136,21 +157,16 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 		out.ToEntConversion = "time.Unix"
 		out.ToEntConversionArg = "0"
 	case efld.IsEnum():
-		enumName := fld.PbFieldDescriptor.GetEnumType().GetName()
-		method := fmt.Sprintf("ToEnt%s_%s", typeName, enumName)
-		out.ToEntConstructor = method
-	case efld.IsJSON():
-		switch efld.Type.Ident {
-		case "[]string":
-		case "[]int32", "[]int64", "[]uint32", "[]uint64":
-			out.ToProtoConversion = ""
-		default:
-			return nil, fmt.Errorf("entproto: no mapping to ent field type %q", efld.Type.ConstName())
+		enumType := fld.PbFieldDescriptor.GetEnumType()
+		if enumType == nil {
+			return nil, fmt.Errorf("entproto: enum field %q has no enum descriptor", pbd.GetName())
 		}
+		method := fmt.Sprintf("ToEnt%s_%s", typeName, enumType.GetName())
+		out.ToEntConstructor = method
 	default:
 		return nil, fmt.Errorf("entproto: no mapping to ent field type %q", efld.Type.ConstName())
 	}
-	if out.hasUnrenderedDirective() && !out.hasRenderableDirective() {
+	if out.hasUnrenderedDirective() {
 		return nil, &UnsupportedEntGoTypeError{
 			Field:   efld.Name,
 			EntType: efld.Type.String(),
@@ -159,22 +175,58 @@ func NewConverter(fld *entproto.FieldMappingDescriptor, typeName string) (*Conve
 	return out, nil
 }
 
-// hasRenderableDirective reports whether the converter carries at least one
-// directive the converter template actually renders. When one is present the
-// field converts correctly, even if unrendered directives were also computed.
-func (c *Converter) hasRenderableDirective() bool {
-	return c.ToProtoConversion != "" ||
-		c.ToProtoConversionModifier != "" ||
-		c.ToProtoConstructor != "" ||
-		c.ToEntConversion != "" ||
-		c.ToEntConstructor != ""
+func jsonConverter(pbd *desc.FieldDescriptor, efld *gen.Field) (*Converter, error) {
+	wireType, ok := pbJSONWireType(pbd)
+	if !ok || efld.Type.Ident != wireType {
+		return nil, fmt.Errorf("entproto: no mapping between JSON field %q (%s) and protobuf field %q (%s)",
+			efld.Name, efld.Type.String(), pbd.GetName(), pbd.GetType())
+	}
+	return &Converter{}, nil
+}
+
+func pbJSONWireType(pbd *desc.FieldDescriptor) (string, bool) {
+	if pbd.GetType() == dpb.FieldDescriptorProto_TYPE_BYTES {
+		if pbd.IsRepeated() {
+			return "[][]byte", true
+		}
+		return "[]byte", true
+	}
+	if !pbd.IsRepeated() {
+		return "", false
+	}
+	switch pbd.GetType() {
+	case dpb.FieldDescriptorProto_TYPE_BOOL:
+		return "[]bool", true
+	case dpb.FieldDescriptorProto_TYPE_STRING:
+		return "[]string", true
+	case dpb.FieldDescriptorProto_TYPE_INT32,
+		dpb.FieldDescriptorProto_TYPE_SINT32,
+		dpb.FieldDescriptorProto_TYPE_SFIXED32:
+		return "[]int32", true
+	case dpb.FieldDescriptorProto_TYPE_INT64,
+		dpb.FieldDescriptorProto_TYPE_SINT64,
+		dpb.FieldDescriptorProto_TYPE_SFIXED64:
+		return "[]int64", true
+	case dpb.FieldDescriptorProto_TYPE_UINT32,
+		dpb.FieldDescriptorProto_TYPE_FIXED32:
+		return "[]uint32", true
+	case dpb.FieldDescriptorProto_TYPE_UINT64,
+		dpb.FieldDescriptorProto_TYPE_FIXED64:
+		return "[]uint64", true
+	case dpb.FieldDescriptorProto_TYPE_FLOAT:
+		return "[]float32", true
+	case dpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return "[]float64", true
+	default:
+		return "", false
+	}
 }
 
 // hasUnrenderedDirective reports whether the converter computed a directive that
 // the converter template does not consume. These directives exist for custom Go
 // types (driver.Valuer, sql.Scanner, encoding.BinaryMarshaler), and the fork's
-// template dropped their rendering, so a field relying only on one would
-// otherwise degrade to an identity assignment that does not compile.
+// template dropped their rendering, so a field relying on one would otherwise
+// emit broken or identity code that does not compile.
 func (c *Converter) hasUnrenderedDirective() bool {
 	return c.ToEntScannerConversion != "" ||
 		c.ToEntMarshallerConstructor != "" ||
@@ -202,6 +254,9 @@ func (e *UnsupportedEntGoTypeError) Error() string {
 
 // Supported value scanner types (https://golang.org/pkg/database/sql/driver/#Value): [int64, float64, bool, []byte, string, time.Time]
 func basicTypeConversion(md *desc.FieldDescriptor, entField *gen.Field, conv *Converter) error {
+	if md == nil || entField == nil {
+		return fmt.Errorf("entproto: missing descriptor or ent field for conversion")
+	}
 	switch md.GetType() {
 	case dpb.FieldDescriptorProto_TYPE_BOOL:
 		if entField.Type.Valuer() {
@@ -219,30 +274,46 @@ func basicTypeConversion(md *desc.FieldDescriptor, entField *gen.Field, conv *Co
 		} else if entField.Type.Valuer() {
 			conv.ToProtoValuer = "[]byte"
 		}
-	case dpb.FieldDescriptorProto_TYPE_INT32:
-		if entField.Type.String() != "int32" {
+	case dpb.FieldDescriptorProto_TYPE_INT32,
+		dpb.FieldDescriptorProto_TYPE_SINT32,
+		dpb.FieldDescriptorProto_TYPE_SFIXED32:
+		if entField.Type.Valuer() {
+			conv.ToProtoValuer = "int32"
+		} else if entField.Type.String() != "int32" {
 			conv.ToProtoConversion = "int32"
 		}
-	case dpb.FieldDescriptorProto_TYPE_INT64:
+	case dpb.FieldDescriptorProto_TYPE_INT64,
+		dpb.FieldDescriptorProto_TYPE_SINT64,
+		dpb.FieldDescriptorProto_TYPE_SFIXED64:
 		if entField.Type.Valuer() {
 			conv.ToProtoValuer = "int64"
 		} else if entField.Type.String() != "int64" {
 			conv.ToProtoConversion = "int64"
 		}
-	case dpb.FieldDescriptorProto_TYPE_UINT32:
-		if entField.Type.String() != "uint32" {
+	case dpb.FieldDescriptorProto_TYPE_UINT32,
+		dpb.FieldDescriptorProto_TYPE_FIXED32:
+		if entField.Type.Valuer() {
+			conv.ToProtoValuer = "uint32"
+		} else if entField.Type.String() != "uint32" {
 			conv.ToProtoConversion = "uint32"
 		}
-	case dpb.FieldDescriptorProto_TYPE_UINT64:
-		if entField.Type.String() != "uint64" {
+	case dpb.FieldDescriptorProto_TYPE_UINT64,
+		dpb.FieldDescriptorProto_TYPE_FIXED64:
+		if entField.Type.Valuer() {
+			conv.ToProtoValuer = "uint64"
+		} else if entField.Type.String() != "uint64" {
 			conv.ToProtoConversion = "uint64"
 		}
 	case dpb.FieldDescriptorProto_TYPE_FLOAT:
-		if entField.Type.String() != "float32" {
+		if entField.Type.Valuer() {
+			conv.ToProtoValuer = "float32"
+		} else if entField.Type.String() != "float32" {
 			conv.ToProtoConversion = "float32"
 		}
 	case dpb.FieldDescriptorProto_TYPE_DOUBLE:
 		if entField.Type.Valuer() {
+			conv.ToProtoValuer = "float64"
+		} else if entField.Type.String() != "float64" {
 			conv.ToProtoConversion = "float64"
 		}
 	}

@@ -6,7 +6,6 @@ import (
 	"maps"
 	"math"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -54,6 +53,7 @@ func LoadAdapter(graph *gen.Graph) (*Adapter, error) {
 		customTypes:      make(map[string]customTypeEntry),
 		descriptors:      make(map[string]*desc.FileDescriptor),
 		schemaProtoFiles: make(map[string]string),
+		generatedFiles:   make(map[string]string),
 		externalFiles:    make(map[string]struct{}),
 		errors:           make(map[string]error),
 	}
@@ -82,6 +82,10 @@ type Adapter struct {
 	customTypes      map[string]customTypeEntry
 	descriptors      map[string]*desc.FileDescriptor
 	schemaProtoFiles map[string]string
+	// generatedFiles maps each generated .proto file path (cleaned) to the
+	// protobuf package that owns it, so external types cannot collide with files
+	// entproto writes.
+	generatedFiles map[string]string
 	// externalFiles holds proto file paths that were synthesised purely to
 	// satisfy cross-file linking for external type references. They must not
 	// be written to disk.
@@ -252,6 +256,7 @@ func (a *Adapter) indexGraph() {
 			continue
 		}
 		a.schemaByFullName[pkg+"."+node.Name] = node
+		a.generatedFiles[path.Clean(*relFileName(pkg))] = pkg
 		if err := a.collectCustomTypes(node); err != nil {
 			a.errors[node.Name] = err
 		}
@@ -468,12 +473,13 @@ func relFileName(packageName string) *string {
 	parts := strings.Split(packageName, ".")
 	fileName := parts[len(parts)-1] + ".proto"
 	parts = append(parts, fileName)
-	joined := filepath.Join(parts...)
+	joined := path.Join(parts...)
 	return &joined
 }
 
 func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.DescriptorProto, customStubs map[string]*descriptorpb.FileDescriptorProto) ([]string, error) {
 	var out []string
+	var pendingStubs []customTypeEntry
 	for _, fld := range m.Field {
 		isEnum := fld.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM
 		if !isEnum && fld.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
@@ -485,9 +491,11 @@ func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.Descri
 				return nil, fmt.Errorf("entproto: field %q uses %s as %s, but it is registered as %s",
 					fld.GetName(), strings.TrimPrefix(typeName, "."), fld.GetType(), entry.kind())
 			}
-			if err := addCustomTypeToStub(customStubs, entry); err != nil {
-				return nil, err
+			if genPkg, collides := a.generatedFiles[path.Clean(entry.ProtoFile)]; collides {
+				return nil, fmt.Errorf("entproto: field %q references external proto file %q, which collides with generated proto file for package %q",
+					fld.GetName(), entry.ProtoFile, genPkg)
 			}
+			pendingStubs = append(pendingStubs, entry)
 			out = append(out, entry.ProtoFile)
 			continue
 		}
@@ -507,6 +515,11 @@ func (a *Adapter) extractDepPaths(selfPackageName string, m *descriptorpb.Descri
 		}
 		if depPackageName != selfPackageName {
 			out = append(out, *relFileName(depPackageName))
+		}
+	}
+	for _, entry := range pendingStubs {
+		if err := addCustomTypeToStub(customStubs, entry); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -567,8 +580,9 @@ func (a *Adapter) toProtoMessageDescriptor(genType *gen.Type) (*descriptorpb.Des
 			protoField.OneofIndex = &oneofIndex
 			msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{Name: toPtr("_" + f.Name)})
 		}
-		// If the field is an enum type, we need to create the enum descriptor as well.
-		if f.Type.Type == field.TypeEnum {
+		// If the field is an enum type using the generated nested enum (not
+		// overridden by Type(...) or EnumField(...)), generate the enum descriptor.
+		if f.Type.Type == field.TypeEnum && protoField.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && !strings.HasPrefix(protoField.GetTypeName(), ".") {
 			dp, err := toProtoEnumDescriptor(f)
 			if err != nil {
 				return nil, err

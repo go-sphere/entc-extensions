@@ -11,6 +11,7 @@ DIRECT_DEPS_TEMPLATE := {{if and (not .Main) (not .Indirect) (not .Replace)}}{{.
 # Resolve go-sphere modules straight from GitHub, bypassing the module proxy
 # and its cached "@latest", which lags behind freshly pushed tags.
 DIRECT_ORIGIN := GOPRIVATE=github.com/go-sphere/*
+FORCE ?= 0
 
 .DEFAULT_GOAL := check
 
@@ -103,18 +104,62 @@ update-golden: regen
 
 tag:
 	@test -n "$(TAG)" || { echo "TAG is required: make tag TAG=v0.0.1"; exit 1; }
-	git tag -s $(TAG) -m "$(TAG)"
-	git push origin --tags
+	@set -eu; \
+	allow_force=0; \
+	if [ "$(FORCE)" = "1" ]; then \
+		case "$(TAG)" in \
+			*-*) allow_force=1 ;; \
+			*) echo "FORCE=1 is only allowed for pre-release tags containing '-' (got $(TAG))" >&2; exit 1 ;; \
+		esac; \
+	fi; \
+	local_exists=0; \
+	if git show-ref --verify --quiet "refs/tags/$(TAG)"; then local_exists=1; fi; \
+	remote_ref="$$(git ls-remote --tags origin "refs/tags/$(TAG)")"; \
+	if [ "$$local_exists" -eq 1 ] || [ -n "$$remote_ref" ]; then \
+		if [ "$$allow_force" -ne 1 ]; then \
+			echo "tag $(TAG) already exists; pass FORCE=1 only for pre-release tags containing '-'" >&2; \
+			exit 1; \
+		fi; \
+		if [ "$$local_exists" -eq 1 ]; then git tag -d "$(TAG)"; fi; \
+		if [ -n "$$remote_ref" ]; then git push origin --delete "refs/tags/$(TAG)"; fi; \
+	fi; \
+	git tag -s "$(TAG)" -m "$(TAG)"; \
+	git push origin "refs/tags/$(TAG)"
 
 tag-all:
 	@test -n "$(TAG)" || { echo "TAG is required: make tag-all TAG=v0.0.1"; exit 1; }
 	@set -eu; \
-	for tag in $(TAG) $(addsuffix /$(TAG),$(TAG_MODULES)); do \
-		git tag -d "$$tag" >/dev/null 2>&1 || true; \
-		git push origin --delete "$$tag" >/dev/null 2>&1 || true; \
+	allow_force=0; \
+	if [ "$(FORCE)" = "1" ]; then \
+		case "$(TAG)" in \
+			*-*) allow_force=1 ;; \
+			*) echo "FORCE=1 is only allowed for pre-release tags containing '-' (got $(TAG))" >&2; exit 1 ;; \
+		esac; \
+	fi; \
+	tags="$(TAG) $(addsuffix /$(TAG),$(TAG_MODULES))"; \
+	to_delete_local=""; \
+	to_delete_remote=""; \
+	for tag in $$tags; do \
+		local_exists=0; \
+		if git show-ref --verify --quiet "refs/tags/$$tag"; then local_exists=1; fi; \
+		remote_ref="$$(git ls-remote --tags origin "refs/tags/$$tag")"; \
+		if [ "$$local_exists" -eq 1 ] || [ -n "$$remote_ref" ]; then \
+			if [ "$$allow_force" -ne 1 ]; then \
+				echo "tag $$tag already exists; pass FORCE=1 only for pre-release tags containing '-'" >&2; \
+				exit 1; \
+			fi; \
+			if [ "$$local_exists" -eq 1 ]; then to_delete_local="$$to_delete_local $$tag"; fi; \
+			if [ -n "$$remote_ref" ]; then to_delete_remote="$$to_delete_remote refs/tags/$$tag"; fi; \
+		fi; \
+	done; \
+	for tag in $$to_delete_local; do git tag -d "$$tag"; done; \
+	if [ -n "$$to_delete_remote" ]; then git push origin --delete $$to_delete_remote; fi; \
+	refs=""; \
+	for tag in $$tags; do \
 		git tag -s "$$tag" -m "$$tag"; \
-	done
-	git push origin --tags
+		refs="$$refs refs/tags/$$tag"; \
+	done; \
+	git push origin $$refs
 
 tag-delete:
 	@test -n "$(TAG)" || { echo "TAG is required: make tag-delete TAG=v0.0.1"; exit 1; }

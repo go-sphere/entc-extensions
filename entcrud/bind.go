@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/go-sphere/entc-extensions/entcrud/conf"
@@ -67,12 +68,10 @@ func BindFiles(c *conf.FilesConf) error {
 func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *conf.EntityConf, strictTypeCheck bool) error {
 	var body strings.Builder
 
-	pkgImports := collectImports(item, extraImports)
+	resolver := buildImportResolver(item, extraImports)
 
 	for _, act := range item.Actions {
-		pkgImports = append(pkgImports, inspect.ExtractImport(act))
-		pkgImports = append(pkgImports, setterImports(act)...)
-		funcContent, err := bind.GenBindFunc(act, item, item.CustomFieldConverters, strictTypeCheck)
+		funcContent, err := bind.GenBindFuncWithResolver(act, item, item.CustomFieldConverters, strictTypeCheck, resolver)
 		if err != nil {
 			return err
 		}
@@ -80,8 +79,54 @@ func genBindFile(filename, pkgName string, extraImports []inspect.Import, item *
 		body.WriteString("\n")
 	}
 
-	file := gofile.CreateGoFile(pkgName, pkgImports, body.String())
+	file := gofile.CreateGoFile(pkgName, resolver.Imports(), body.String())
 	return gofile.WriteFile(filename, []byte(file))
+}
+
+func buildImportResolver(item *conf.EntityConf, extraImports []inspect.Import) *inspect.ImportResolver {
+	// Reserve parameter and local variable names declared by func.tmpl so no
+	// imported package alias (e.g. a schema named Option or Target) shadows them.
+	resolver := inspect.NewImportResolver("source", "target", "options", "option")
+
+	for _, act := range item.Actions {
+		imp := inspect.ExtractImport(act)
+		resolver.Resolve(imp.Path, imp.Alias)
+	}
+
+	targetImp := inspect.ExtractImport(item.Target)
+	resolver.Resolve(targetImp.Path, targetImp.Alias)
+
+	if subPkg := inspect.ExtractSubPackageName(item.Source); subPkg != "" {
+		resolver.Resolve(inspect.ExtractSubPackagePath(item.Source), subPkg)
+	}
+
+	if len(item.CustomFieldConverters) > 0 {
+		keys := make([]string, 0, len(item.CustomFieldConverters))
+		for k := range item.CustomFieldConverters {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			funcInfo := inspect.GetFuncInfo(item.CustomFieldConverters[k])
+			if funcInfo.ImportPath != "" {
+				resolver.Resolve(funcInfo.ImportPath, funcInfo.Package)
+			}
+		}
+	}
+
+	for _, act := range item.Actions {
+		for _, imp := range setterImports(act) {
+			resolver.Resolve(imp.Path, imp.Alias)
+		}
+	}
+
+	for _, imp := range extraImports {
+		if imp.Path != "" {
+			resolver.Resolve(imp.Path, imp.Alias)
+		}
+	}
+
+	return resolver
 }
 
 // setterImports returns the packages of named setter argument types declared
@@ -107,37 +152,4 @@ func setterImports(action any) []inspect.Import {
 		out = append(out, inspect.Import{Path: arg.PkgPath(), Alias: pkgName})
 	}
 	return out
-}
-
-func collectImports(item *conf.EntityConf, extraImports []inspect.Import) []inspect.Import {
-	pkgImports := make([]inspect.Import, 0, len(extraImports)+4)
-
-	// Add target (protobuf) package import
-	pkgImports = append(pkgImports, inspect.ExtractImport(item.Target))
-
-	// Add sub-package import for field constants (e.g., example, edgeitem)
-	if subPkg := inspect.ExtractSubPackageName(item.Source); subPkg != "" {
-		pkgImports = append(pkgImports, inspect.Import{
-			Path:  inspect.ExtractSubPackagePath(item.Source),
-			Alias: subPkg,
-		})
-	}
-
-	// Extract imports from custom converters
-	if item.CustomFieldConverters != nil {
-		for _, converter := range item.CustomFieldConverters {
-			funcInfo := inspect.GetFuncInfo(converter)
-			if funcInfo.ImportPath != "" {
-				pkgImports = append(pkgImports, inspect.Import{
-					Path:  funcInfo.ImportPath,
-					Alias: funcInfo.Package,
-				})
-			}
-		}
-	}
-
-	// Add extra imports
-	pkgImports = append(pkgImports, extraImports...)
-
-	return pkgImports
 }

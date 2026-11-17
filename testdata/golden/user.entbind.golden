@@ -33,7 +33,9 @@ func CreateUser(source *ent.UserCreate, target *entpb.User, options ...Option) *
 		}
 	}
 	if option.CanSetField(user.FieldBirthday) {
-		source.SetBirthday(conv.ToEntUserBirthday(target.Birthday))
+		if option.CanSetZero(user.FieldBirthday) || target.Birthday != 0 {
+			source.SetBirthday(conv.ToEntUserBirthday(target.Birthday))
+		}
 	}
 	if option.CanSetField(user.FieldAvatar) {
 		if option.CanSetZero(user.FieldAvatar) || target.Avatar != nil {
@@ -226,17 +228,25 @@ func UpdateOneUser(source *ent.UserUpdateOne, target *entpb.User, options ...Opt
 		}
 	}
 	if option.CanSetField(user.FieldOptionalBirthday) {
-		if target.OptionalBirthday != nil {
-			source.SetOptionalBirthday(conv.ToEntUserBirthday(*target.OptionalBirthday))
+		if target.OptionalBirthday == nil && option.ClearOnNil(user.FieldOptionalBirthday) {
+			source.ClearOptionalBirthday()
 		} else {
-			source.SetNillableOptionalBirthday(nil)
+			if target.OptionalBirthday != nil {
+				source.SetOptionalBirthday(conv.ToEntUserBirthday(*target.OptionalBirthday))
+			} else {
+				source.SetNillableOptionalBirthday(nil)
+			}
 		}
 	}
 	if option.CanSetField(user.FieldOptionalLevel) {
-		if target.OptionalLevel != nil {
-			source.SetOptionalLevel(entmap.ToEntUser_OptionalLevel(*target.OptionalLevel))
+		if target.OptionalLevel == nil && option.ClearOnNil(user.FieldOptionalLevel) {
+			source.ClearOptionalLevel()
 		} else {
-			source.SetNillableOptionalLevel(nil)
+			if target.OptionalLevel != nil {
+				source.SetOptionalLevel(entmap.ToEntUser_OptionalLevel(*target.OptionalLevel))
+			} else {
+				source.SetNillableOptionalLevel(nil)
+			}
 		}
 	}
 	if option.CanSetField(user.FieldNickname) {

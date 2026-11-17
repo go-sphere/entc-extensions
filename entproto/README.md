@@ -156,7 +156,7 @@ func main() {
 
 ## Message Annotations
 
-### ent.Message
+### entproto.Message
 
 By default, `entproto` will skip all schemas, unless they explicitly opt-in for proto file generation:
 

@@ -53,12 +53,16 @@ func verifyIDTypesAgainstSource(g *gen.Graph, schemaDir, entPackage string) erro
 	if entDir == "" {
 		return nil
 	}
+	idTypes := parseEntDirIDTypes(entDir)
+	if len(idTypes) == 0 {
+		return nil
+	}
 	for _, node := range g.Nodes {
 		if node.ID == nil {
 			// Views and composite-ID edge schemas have no ID field.
 			continue
 		}
-		actual, ok := structIDType(entDir, node.Name)
+		actual, ok := idTypes[node.Name]
 		if !ok {
 			// Generated source not available yet; trust the IDType option.
 			continue
@@ -106,14 +110,14 @@ func entDirBesideSchema(schemaDir string) string {
 	return ""
 }
 
-// structIDType parses the generated ent source files in entDir and returns the
-// declared type of typeName's ID field. It scans every .go file rather than
-// assuming entc's lower-cased file naming, so custom layouts keep working.
-func structIDType(entDir, typeName string) (string, bool) {
+// parseEntDirIDTypes parses every .go file in entDir once and returns a map
+// from struct type name to the declared Go type of its ID field.
+func parseEntDirIDTypes(entDir string) map[string]string {
 	entries, err := os.ReadDir(entDir)
 	if err != nil {
-		return "", false
+		return nil
 	}
+	out := make(map[string]string)
 	fset := token.NewFileSet()
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" {
@@ -123,14 +127,21 @@ func structIDType(entDir, typeName string) (string, bool) {
 		if err != nil {
 			continue
 		}
-		if idType, ok := structIDTypeInFile(f, typeName); ok {
-			return idType, true
-		}
+		collectStructIDTypesInFile(f, out)
 	}
-	return "", false
+	return out
 }
 
-func structIDTypeInFile(f *ast.File, typeName string) (string, bool) {
+// structIDType parses the generated ent source files in entDir and returns the
+// declared type of typeName's ID field. It scans every .go file rather than
+// assuming entc's lower-cased file naming, so custom layouts keep working.
+func structIDType(entDir, typeName string) (string, bool) {
+	idTypes := parseEntDirIDTypes(entDir)
+	idType, ok := idTypes[typeName]
+	return idType, ok
+}
+
+func collectStructIDTypesInFile(f *ast.File, out map[string]string) {
 	for _, decl := range f.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.TYPE {
@@ -138,7 +149,7 @@ func structIDTypeInFile(f *ast.File, typeName string) (string, bool) {
 		}
 		for _, spec := range gd.Specs {
 			ts, ok := spec.(*ast.TypeSpec)
-			if !ok || ts.Name.Name != typeName {
+			if !ok {
 				continue
 			}
 			st, ok := ts.Type.(*ast.StructType)
@@ -148,13 +159,12 @@ func structIDTypeInFile(f *ast.File, typeName string) (string, bool) {
 			for _, fld := range st.Fields.List {
 				for _, name := range fld.Names {
 					if name.Name == "ID" {
-						return exprString(fld.Type), true
+						out[ts.Name.Name] = exprString(fld.Type)
 					}
 				}
 			}
 		}
 	}
-	return "", false
 }
 
 func exprString(expr ast.Expr) string {

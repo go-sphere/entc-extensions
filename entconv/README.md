@@ -21,12 +21,12 @@ When building gRPC services with Ent ORM, you often need to convert between your
 - **Presence Support**: Preserves nil versus zero values for Ent `Optional().Nillable()` scalar fields generated as proto3 `optional`
 
 > **Scope note — what the generated converters do NOT cover.** `ToProto*`/`ToEnt*`
-> only map scalar fields, enums, and message-typed fields that store a single
-> generated Go message (e.g. an Ent `JSON` column typed as
-> `*timestamppb.Timestamp`). **Edge fields (associations) are intentionally
-> omitted**: fields such as `repeated Post posts` or `User author` exist on the
-> protobuf side but are never populated by the generated converter. Handle
-> related entities explicitly in your own code.
+> only map scalar fields, supported JSON slice/`[]byte` fields, enums, and
+> external message/enum fields (`entproto.MessageField`/`entproto.EnumField`,
+> e.g. an Ent `JSON` column typed as `*timestamppb.Timestamp`). **Edge fields
+> (associations) are intentionally omitted**: fields such as `repeated Post posts`
+> or `User author` exist on the protobuf side but are never populated by the
+> generated converter. Handle related entities explicitly in your own code.
 
 ## Installation
 
@@ -160,6 +160,8 @@ func main() {
 | `ProtoAlias` | Yes | Import alias used for protobuf types | `entpb` |
 | `OutDir` | Yes | Output directory for generated converter files | `./internal/pkg/render/entmap` |
 | `MissingProtoPolicy` | No | `strict` returns an error; `warn` generates matched types and invokes `WarningHandler` | `strict` |
+| `WarningHandler` | No | Callback invoked with `*MissingProtoMessagesError` under `warn` policy | `stderr` |
+| `AutoFill` | No | Runs `entproto.FixGraph` on the loaded ent graph before converter generation (`WithAutoFill()`) | `false` |
 
 ## Supported Type Mappings
 
@@ -169,14 +171,16 @@ func main() {
 | `int` | `int64` | Fixed mapping |
 | `int8` / `int16` / `int32` | `int32` | Fixed mapping |
 | `int64` | `int64` | Direct mapping |
-| `uint` / `uint8` / `uint16` / `uint32` | `uint32` | Fixed mapping |
-| `uint64` | `uint64` | Direct mapping |
+| `uint8` / `uint16` / `uint32` | `uint32` | Fixed mapping |
+| `uint` / `uint64` | `uint64` | Fixed mapping |
 | `bool` | `bool` | Direct mapping |
 | `float32` | `float` | Direct mapping |
 | `float64` | `double` | Direct mapping |
 | `time.Time` | `int64` | Unix seconds |
 | `[]byte` | `bytes` | Direct mapping |
-| Enum | Enum | Automatic conversion |
+| `JSON` (`[]T` / `[]byte`) | `repeated T` / `bytes` | Matching Go/wire slice or bytes types (`[]string`, `[]int32`, `[]int64`, `[]uint32`, `[]uint64`, `[]bool`, `[]float32`, `[]float64`, `[]byte`, `[][]byte`) |
+| `MessageField` / `EnumField` | `message` / external `enum` | Direct assignment when Go types match |
+| Enum | Enum | Automatic conversion (`ToProto<Entity>_<Field>` / `ToEnt<Entity>_<Field>`) |
 | Optional nillable scalar | proto3 `optional` scalar | Nil/presence is preserved |
 
 Custom `GoType` values that implement `driver.Valuer` / `sql.Scanner` /
@@ -196,8 +200,8 @@ func ToProtoUser(e *ent.User) (*entpb.User, error)
 func ToEntUser(v *entpb.User) (*ent.User, error)
 
 // Enum conversion (if applicable)
-func ToProtoUserStatus(e user.Status) entpb.User_Status
-func ToEntUserStatus(e entpb.User_Status) user.Status
+func ToProtoUser_Status(e user.Status) entpb.User_Status
+func ToEntUser_Status(e entpb.User_Status) user.Status
 ```
 
 ## Project Structure Example
