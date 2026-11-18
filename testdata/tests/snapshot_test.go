@@ -18,6 +18,11 @@ func TestGeneratedSnapshots(t *testing.T) {
 		t.Fatalf("[entcrud] generated entbind/user.go missing CreateUser")
 	}
 
+	postBindFile := mustRead(t, fromRoot(t, "internal/pkg/render/entbind/post.go"))
+	if !strings.Contains(postBindFile, "source.SetIPV4(entmap.ToEntPost_IPV4(target.IpV4))") {
+		t.Fatalf("[entcrud] generated entbind/post.go missing SetIPV4 binding")
+	}
+
 	protoFile := mustRead(t, fromRoot(t, "proto/entpb/entpb.proto"))
 	if !strings.Contains(protoFile, "repeated Post posts = 16;") {
 		t.Fatalf("[entproto] generated proto missing user.posts edge")

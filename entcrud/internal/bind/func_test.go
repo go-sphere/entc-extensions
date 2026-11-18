@@ -378,3 +378,158 @@ func TestGenBindFuncWithResolver_UsesResolvedAliases(t *testing.T) {
 		t.Fatalf("generated function failed gofmt: %v\n%s", err, code)
 	}
 }
+
+type entIPV4 string
+
+type pbIPV4 int32
+
+func ConvertPBIPV4(v pbIPV4) entIPV4 {
+	return entIPV4(rune('0' + v))
+}
+
+func NormalizeS3Key(v string) string {
+	return strings.TrimPrefix(v, "/")
+}
+
+type taggedAcronymSource struct {
+	IPV4    entIPV4 `json:"ip_v4,omitempty"`
+	HTTPURL string  `json:"http_url,omitempty"`
+	S3Key   string  `json:"s3_key,omitempty"`
+}
+
+type taggedAcronymTarget struct {
+	IpV4    pbIPV4 `protobuf:"varint,10,opt,name=ip_v4,json=ipV4,proto3" json:"ip_v4,omitempty"`
+	HttpUrl string `protobuf:"bytes,11,opt,name=http_url,json=httpUrl,proto3" json:"httpUrl,omitempty"`
+	S3Key   string `json:"s3_key,omitempty"`
+}
+
+type optionalAcronymTarget struct {
+	IpV4    *pbIPV4 `protobuf:"varint,10,opt,name=ip_v4,json=ipV4,proto3,oneof" json:"ip_v4,omitempty"`
+	HttpUrl string  `json:"http_url,omitempty"`
+	S3Key   string  `json:"s3_key,omitempty"`
+}
+
+type untaggedAcronymTarget struct {
+	IPV4    pbIPV4
+	HTTPURL string
+	S3Key   string
+}
+
+type taggedAcronymCreate struct{}
+
+func (taggedAcronymCreate) SetIPV4(entIPV4)   {}
+func (taggedAcronymCreate) SetHTTPURL(string) {}
+func (taggedAcronymCreate) SetS3Key(string)   {}
+
+type taggedAcronymUpdateOne struct{}
+
+func (taggedAcronymUpdateOne) SetIPV4(entIPV4)   {}
+func (taggedAcronymUpdateOne) ClearIPV4()        {}
+func (taggedAcronymUpdateOne) SetHTTPURL(string) {}
+func (taggedAcronymUpdateOne) SetS3Key(string)   {}
+
+func TestGenBindFunc_AcronymAndDigitFieldsViaTags(t *testing.T) {
+	// Without a custom converter, IPV4 <-> IpV4 must still be matched via tags and
+	// rejected by strict type checking rather than silently skipped.
+	unconverted := conf.NewEntity(taggedAcronymSource{}, taggedAcronymTarget{}, []any{taggedAcronymCreate{}})
+	_, err := GenBindFunc(taggedAcronymCreate{}, unconverted, nil, true)
+	var mismatch *conf.TypeMismatchListError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected TypeMismatchListError for IPV4 <-> IpV4, got %T (%v)", err, err)
+	}
+	if len(mismatch.Items) != 1 || mismatch.Items[0].Field != "IPV4" {
+		t.Fatalf("unexpected mismatch items: %+v", mismatch.Items)
+	}
+
+	// Canonical tag keys work for custom converters on IPV4, HTTPURL, and S3Key.
+	entity := conf.NewEntity(
+		taggedAcronymSource{},
+		taggedAcronymTarget{},
+		[]any{taggedAcronymCreate{}, taggedAcronymUpdateOne{}},
+		conf.WithCustomFieldConverter("ip_v4", ConvertPBIPV4),
+		conf.WithCustomFieldConverter("s3_key", NormalizeS3Key),
+	)
+	code, err := GenBindFunc(taggedAcronymCreate{}, entity, entity.CustomFieldConverters, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc create failed: %v", err)
+	}
+	for _, want := range []string{
+		"SetIPV4(bind.ConvertPBIPV4(target.IpV4))",
+		"SetHTTPURL(target.HttpUrl)",
+		"SetS3Key(bind.NormalizeS3Key(target.S3Key))",
+	} {
+		if !strings.Contains(code, want) {
+			t.Fatalf("generated code missing %q:\n%s", want, code)
+		}
+	}
+	if _, err := format.Source([]byte("package out\n" + code)); err != nil {
+		t.Fatalf("generated create function failed gofmt: %v\n%s", err, code)
+	}
+
+	// Optional pointer target emits both ClearIPV4 and dereferenced SetIPV4.
+	optEntity := conf.NewEntity(
+		taggedAcronymSource{},
+		optionalAcronymTarget{},
+		[]any{taggedAcronymUpdateOne{}},
+		conf.WithCustomFieldConverter("ip_v4", ConvertPBIPV4),
+	)
+	optCode, err := GenBindFunc(taggedAcronymUpdateOne{}, optEntity, optEntity.CustomFieldConverters, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc optional update failed: %v", err)
+	}
+	for _, want := range []string{
+		"source.ClearIPV4()",
+		"source.SetIPV4(bind.ConvertPBIPV4(*target.IpV4))",
+		"source.SetHTTPURL(target.HttpUrl)",
+		"source.SetS3Key(target.S3Key)",
+	} {
+		if !strings.Contains(optCode, want) {
+			t.Fatalf("generated optional update code missing %q:\n%s", want, optCode)
+		}
+	}
+
+	// Legacy strcase.ToSnake(field.Name) keys ("ipv4", "s3key") also resolve converters,
+	// and untagged target fields still match via fallback.
+	fallbackEntity := conf.NewEntity(
+		taggedAcronymSource{},
+		untaggedAcronymTarget{},
+		[]any{taggedAcronymCreate{}},
+		conf.WithCustomFieldConverter("ipv4", ConvertPBIPV4),
+		conf.WithCustomFieldConverter("s3key", NormalizeS3Key),
+	)
+	fallbackCode, err := GenBindFunc(taggedAcronymCreate{}, fallbackEntity, fallbackEntity.CustomFieldConverters, true)
+	if err != nil {
+		t.Fatalf("GenBindFunc fallback failed: %v", err)
+	}
+	for _, want := range []string{
+		"SetIPV4(bind.ConvertPBIPV4(target.IPV4))",
+		"SetHTTPURL(target.HTTPURL)",
+		"SetS3Key(bind.NormalizeS3Key(target.S3Key))",
+	} {
+		if !strings.Contains(fallbackCode, want) {
+			t.Fatalf("generated fallback code missing %q:\n%s", want, fallbackCode)
+		}
+	}
+
+	// IgnoreFields honors both canonical tag names and Go/snake field names.
+	for _, ignoreList := range [][]string{
+		{"ip_v4", "http_url", "s3_key"},
+		{"IPV4", "HTTPURL", "S3Key"},
+	} {
+		ignoredEntity := conf.NewEntity(
+			taggedAcronymSource{},
+			taggedAcronymTarget{},
+			[]any{taggedAcronymCreate{}},
+			conf.WithIgnoreFields(ignoreList...),
+		)
+		ignoredCode, err := GenBindFunc(taggedAcronymCreate{}, ignoredEntity, nil, true)
+		if err != nil {
+			t.Fatalf("GenBindFunc with ignore %v failed: %v", ignoreList, err)
+		}
+		for _, forbidden := range []string{"SetIPV4", "SetHTTPURL", "SetS3Key"} {
+			if strings.Contains(ignoredCode, forbidden) {
+				t.Fatalf("ignore %v should omit %s, got:\n%s", ignoreList, forbidden, ignoredCode)
+			}
+		}
+	}
+}

@@ -84,6 +84,10 @@ func ExtractSubPackagePath(val any) string {
 }
 
 // ExtractPublicFields extracts all public (exported) fields from a struct using reflection.
+// Each field's primary key prefers a non-empty, non-"-" protobuf tag name,
+// then the json tag name, falling back to keyMapper(field.Name) (or field.Name
+// when keyMapper is nil). When the mapped field name differs from the primary
+// key, it is also recorded in the returned map if not already taken.
 func ExtractPublicFields(obj any, keyMapper func(string) string) ([]string, map[string]reflect.StructField) {
 	if obj == nil {
 		return nil, nil
@@ -101,14 +105,43 @@ func ExtractPublicFields(obj any, keyMapper func(string) string) ([]string, map[
 		if !field.IsExported() || field.Anonymous {
 			continue
 		}
-		key := field.Name
+		alt := field.Name
 		if keyMapper != nil {
-			key = keyMapper(key)
+			alt = keyMapper(alt)
+		}
+		key := canonicalFieldKey(field)
+		if key == "" {
+			key = alt
 		}
 		keys = append(keys, key)
 		fields[key] = field
+		if alt != key {
+			if _, exists := fields[alt]; !exists {
+				fields[alt] = field
+			}
+		}
 	}
 	return keys, fields
+}
+
+func canonicalFieldKey(field reflect.StructField) string {
+	if pbTag := field.Tag.Get("protobuf"); pbTag != "" && pbTag != "-" {
+		for _, part := range strings.Split(pbTag, ",") {
+			if name, ok := strings.CutPrefix(part, "name="); ok {
+				if name != "" && name != "-" {
+					return name
+				}
+				break
+			}
+		}
+	}
+	if jsonTag := field.Tag.Get("json"); jsonTag != "" {
+		name, _, _ := strings.Cut(jsonTag, ",")
+		if name != "" && name != "-" {
+			return name
+		}
+	}
+	return ""
 }
 
 // ExtractPublicMethods extracts all public methods from a type using reflection.

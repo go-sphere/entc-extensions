@@ -30,6 +30,7 @@ func main() {
 			entpb.Post{},
 			[]any{ent.PostCreate{}, ent.PostUpdateOne{}},
 			conf.WithCustomFieldConverter(post.FieldStatus, entmap.ToEntPost_Status),
+			conf.WithCustomFieldConverter(post.FieldIPV4, entmap.ToEntPost_IPV4),
 		),
 		conf.NewEntity(
 			ent.Group{},

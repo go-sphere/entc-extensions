@@ -150,14 +150,19 @@ func buildFieldContexts(
 	fields := make([]fieldContext, 0, len(keys))
 	mismatches := make([]conf.TypeMismatchError, 0)
 	for _, key := range keys {
-		if _, ignored := ignoreFields[key]; ignored {
-			continue
-		}
 		sourceField, ok := sourceFields[key]
 		if !ok {
 			continue
 		}
+		if isIgnoredField(key, sourceField.Name, ignoreFields) {
+			continue
+		}
 		targetField, ok := targetFields[key]
+		if !ok {
+			if alt := strcase.ToSnake(sourceField.Name); alt != key {
+				targetField, ok = targetFields[alt]
+			}
+		}
 		if !ok {
 			continue
 		}
@@ -175,6 +180,37 @@ func buildFieldContexts(
 		fields = append(fields, field)
 	}
 	return fields, mismatches
+}
+
+func isIgnoredField(key, sourceFieldName string, ignoreFields map[string]struct{}) bool {
+	if len(ignoreFields) == 0 {
+		return false
+	}
+	if _, ignored := ignoreFields[key]; ignored {
+		return true
+	}
+	if _, ignored := ignoreFields[strings.ToLower(key)]; ignored {
+		return true
+	}
+	if _, ignored := ignoreFields[strings.ToLower(strcase.ToSnake(sourceFieldName))]; ignored {
+		return true
+	}
+	if _, ignored := ignoreFields[strings.ToLower(sourceFieldName)]; ignored {
+		return true
+	}
+	return false
+}
+
+func lookupCustomConverter(customConverters map[string]any, key, sourceFieldName string) (any, bool) {
+	if converter, ok := customConverters[key]; ok {
+		return converter, true
+	}
+	if alt := strcase.ToSnake(sourceFieldName); alt != key {
+		if converter, ok := customConverters[alt]; ok {
+			return converter, true
+		}
+	}
+	return nil, false
 }
 
 func buildFieldContext(
@@ -232,7 +268,7 @@ func buildFieldContext(
 		field.TargetSourceIsSomeType = targetField.Type.AssignableTo(setterArgType)
 	}
 
-	if converter, ok := customConverters[key]; ok {
+	if converter, ok := lookupCustomConverter(customConverters, key, sourceField.Name); ok {
 		info, takesPtr, mismatch := validateCustomConverter(converter, targetField.Type, setterArgType, entityName, sourceField.Name, resolver)
 		if mismatch != nil {
 			return field, true, mismatch

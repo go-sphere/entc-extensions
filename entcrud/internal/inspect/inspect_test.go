@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/go-sphere/entc-extensions/entcrud/internal/strcase"
 )
 
 type testStruct struct {
@@ -50,6 +52,58 @@ func TestExtractPublicFields(t *testing.T) {
 	}
 	if _, ok := fields["Email"]; !ok {
 		t.Error("Expected Email field")
+	}
+}
+
+func TestExtractPublicFields_TagsAndFallback(t *testing.T) {
+	type taggedStruct struct {
+		IpV4        int32  `protobuf:"varint,1,opt,name=ip_v4,json=ipV4,proto3" json:"ipV4,omitempty"`
+		HTTPURL     string `json:"http_url,omitempty"`
+		S3Key       string `json:"s3_key,omitempty"`
+		SkipJSON    string `json:"-"`
+		EmptyJSON   string `json:",omitempty"`
+		SkipPB      string `protobuf:"-"`
+		Ipv4Primary string `json:"ipv4"`
+		IPV4Shadow  string `json:"shadow_ipv4"`
+	}
+
+	keys, fields := ExtractPublicFields(taggedStruct{}, strcase.ToSnake)
+	wantKeys := []string{
+		"ip_v4",
+		"http_url",
+		"s3_key",
+		"skip_json",
+		"empty_json",
+		"skip_pb",
+		"ipv4",
+		"shadow_ipv4",
+	}
+	if !reflect.DeepEqual(keys, wantKeys) {
+		t.Fatalf("keys = %v, want %v", keys, wantKeys)
+	}
+
+	// Both canonical keys and strcase fallback keys resolve when unambiguous.
+	if f, ok := fields["ip_v4"]; !ok || f.Name != "IpV4" {
+		t.Fatalf("fields[ip_v4] = (%v, %v), want IpV4", f.Name, ok)
+	}
+	if f, ok := fields["http_url"]; !ok || f.Name != "HTTPURL" {
+		t.Fatalf("fields[http_url] = (%v, %v), want HTTPURL", f.Name, ok)
+	}
+	if f, ok := fields["httpurl"]; !ok || f.Name != "HTTPURL" {
+		t.Fatalf("fields[httpurl] = (%v, %v), want HTTPURL", f.Name, ok)
+	}
+	if f, ok := fields["s3_key"]; !ok || f.Name != "S3Key" {
+		t.Fatalf("fields[s3_key] = (%v, %v), want S3Key", f.Name, ok)
+	}
+	if f, ok := fields["s3key"]; !ok || f.Name != "S3Key" {
+		t.Fatalf("fields[s3key] = (%v, %v), want S3Key", f.Name, ok)
+	}
+	// Primary key "ipv4" from Ipv4Primary must not be overwritten by IPV4Shadow's alt key.
+	if f, ok := fields["ipv4"]; !ok || f.Name != "Ipv4Primary" {
+		t.Fatalf("fields[ipv4] = (%v, %v), want Ipv4Primary", f.Name, ok)
+	}
+	if f, ok := fields["shadow_ipv4"]; !ok || f.Name != "IPV4Shadow" {
+		t.Fatalf("fields[shadow_ipv4] = (%v, %v), want IPV4Shadow", f.Name, ok)
 	}
 }
 
